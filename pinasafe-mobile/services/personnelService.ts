@@ -28,16 +28,30 @@ export interface Personnel {
 }
 
 export interface CreatePersonnelData {
-  userId?: string;
+  userId: string;
   name: string;
   contactNumber: string;
   email?: string;
-  address?: string;
-  barangay?: string;
-  city?: string;
-  province?: string;
   specializations?: string[];
   personnelRole: 'staff' | 'rescue_member';
+}
+
+export interface CreatePersonnelInvitationData {
+  email: string;
+  name: string;
+  contactNumber: string;
+  personnelRole: 'staff' | 'rescue_member';
+  specializations?: string[];
+}
+
+export interface PersonnelInvitation {
+  id: string;
+  email: string;
+  name: string;
+  personnelRole: 'staff' | 'rescue_member';
+  userRole: 'responder';
+  expiresAt: string;
+  invitationToken: string;
 }
 
 export interface UpdatePersonnelData {
@@ -71,6 +85,17 @@ class PersonnelService {
       console.error('Create personnel error:', error);
       throw error;
     }
+  }
+
+  async invitePersonnel(data: CreatePersonnelInvitationData): Promise<PersonnelInvitation> {
+    const response = await apiService.post('/personnel/invitations', {
+      email: data.email,
+      name: data.name,
+      contactNumber: data.contactNumber,
+      personnelRole: data.personnelRole,
+      specializations: data.specializations,
+    });
+    return response.data.data;
   }
 
   async updatePersonnel(id: string, data: UpdatePersonnelData): Promise<Personnel> {
