@@ -9,7 +9,7 @@ export default function ChangePasswordScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, isSigningOut } = useAuth();
 
   const handleChangePassword = async () => {
     if (!newPassword || !confirmPassword) {
@@ -45,8 +45,12 @@ export default function ChangePasswordScreen() {
           {
             text: 'OK',
             onPress: async () => {
-              await signOut();
-              router.replace('/login');
+              try {
+                await signOut();
+                router.replace('/(auth)/login');
+              } catch {
+                Alert.alert('Sign Out Failed', 'Unable to sign out. Please check your connection and try again.');
+              }
             }
           }
         ]
@@ -59,8 +63,12 @@ export default function ChangePasswordScreen() {
   };
 
   const handleLogout = async () => {
-    await signOut();
-    router.replace('/login');
+    try {
+      await signOut();
+      router.replace('/(auth)/login');
+    } catch {
+      Alert.alert('Sign Out Failed', 'Unable to sign out. Please check your connection and try again.');
+    }
   };
 
   return (
@@ -113,9 +121,9 @@ export default function ChangePasswordScreen() {
       <TouchableOpacity
         className="rounded-lg py-4 items-center border border-gray-300"
         onPress={handleLogout}
-        disabled={loading}
+        disabled={loading || isSigningOut}
       >
-        <Text className="text-gray-700 font-semibold">Logout</Text>
+        {isSigningOut ? <ActivityIndicator /> : <Text className="text-gray-700 font-semibold">Logout</Text>}
       </TouchableOpacity>
     </View>
   );

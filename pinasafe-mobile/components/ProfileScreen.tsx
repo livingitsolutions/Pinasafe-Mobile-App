@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Alert, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, RefreshControl, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { User, MapPin, Phone, Settings, CircleHelp as HelpCircle, Shield, Bell, ChevronRight, Edit3, LogOut, Activity } from 'lucide-react-native';
@@ -66,7 +66,7 @@ const roleConfig = {
 };
 
 export default function ProfileScreen({ userRole }: ProfileScreenProps) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isSigningOut } = useAuth();
   const config = roleConfig[userRole];
   const [refreshing, setRefreshing] = React.useState(false);
 
@@ -87,7 +87,25 @@ export default function ProfileScreen({ userRole }: ProfileScreenProps) {
     Alert.alert('Edit Profile', 'Profile editing feature coming soon.');
   };
 
+  const performSignOut = async () => {
+    try {
+      await signOut();
+      router.replace('/(auth)/login');
+    } catch {
+      Alert.alert('Sign Out Failed', 'Unable to sign out. Please check your connection and try again.');
+    }
+  };
+
   const handleSignOut = () => {
+    if (isSigningOut) return;
+
+    if (Platform.OS === 'web') {
+      if (globalThis.confirm('Are you sure you want to sign out?')) {
+        void performSignOut();
+      }
+      return;
+    }
+
     Alert.alert(
       'Sign Out',
       'Are you sure you want to sign out?',
@@ -96,10 +114,7 @@ export default function ProfileScreen({ userRole }: ProfileScreenProps) {
         { 
           text: 'Sign Out', 
           style: 'destructive',
-          onPress: async () => {
-            await signOut();
-            router.replace('/(auth)/login');
-          }
+          onPress: performSignOut,
         },
       ]
     );
@@ -267,11 +282,13 @@ export default function ProfileScreen({ userRole }: ProfileScreenProps) {
             {/* Sign Out Button */}
             <TouchableOpacity
               onPress={handleSignOut}
+              disabled={isSigningOut}
+              accessibilityState={{ disabled: isSigningOut, busy: isSigningOut }}
               className="p-4 flex-row items-center justify-between border-t border-gray-100"
             >
               <View className="flex-row items-center">
-                <LogOut size={20} color="#DC2626" strokeWidth={1.5} />
-                <Text className="ml-3 font-medium text-red-600">Sign Out</Text>
+                {isSigningOut ? <ActivityIndicator color="#DC2626" /> : <LogOut size={20} color="#DC2626" strokeWidth={1.5} />}
+                <Text className="ml-3 font-medium text-red-600">{isSigningOut ? 'Signing Out…' : 'Sign Out'}</Text>
               </View>
               <ChevronRight size={20} color="#9CA3AF" strokeWidth={1.5} />
             </TouchableOpacity>

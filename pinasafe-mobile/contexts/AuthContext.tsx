@@ -346,7 +346,7 @@
 //   return context;
 // }
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { apiService } from '@/services/apiService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -372,6 +372,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isSigningOut: boolean;
   signIn: (email: string, password: string) => Promise<User>;
   signUp: (email: string, password: string, userData: any) => Promise<User | undefined>;
   signOut: () => Promise<void>;
@@ -428,6 +429,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const signOutInProgress = useRef<Promise<void> | null>(null);
 
   const mapApiUser = (u: any): User => ({
     id: u.id,
@@ -473,12 +476,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(mapApiUser(raw));
       } else {
         // Token might be invalid, clear it
-        await signOut();
+        await clearInvalidSession();
       }
     } catch (error) {
       console.error('Error loading user profile:', error);
-      await signOut();
+      await clearInvalidSession();
     }
+  };
+
+  const clearInvalidSession = async () => {
+    await apiService.clearLocalSession();
+    setAuthToken(null);
+    setUser(null);
   };
 
   const signIn = async (email: string, password: string): Promise<User & { mustChangePassword?: boolean }> => {
@@ -489,6 +498,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (response.data) {
       const raw = response.data.user || response.data;
       const mapped = mapApiUser(raw);
+      setAuthToken(response.data.token);
       setUser(mapped);
       return {
         ...mapped,
@@ -528,6 +538,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.data) {
         const raw = response.data.user || response.data;
         const mapped = mapApiUser(raw);
+        setAuthToken(response.data.token);
         setUser(mapped);
         console.log('✅ User signed up and automatically signed in');
         return mapped;
@@ -541,8 +552,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
-    await apiService.logout();
-    setUser(null);
+    if (signOutInProgress.current) {
+      return signOutInProgress.current;
+    }
+
+    const operation = (async () => {
+      setIsSigningOut(true);
+      try {
+        await apiService.logout();
+        setAuthToken(null);
+        setUser(null);
+      } finally {
+        setIsSigningOut(false);
+        signOutInProgress.current = null;
+      }
+    })();
+
+    signOutInProgress.current = operation;
+    return operation;
   };
 
   const refreshUser = async () => {
@@ -564,6 +591,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     isLoading,
     isAuthenticated: !!user,
+    isSigningOut,
     signIn,
     signUp,
     signOut,

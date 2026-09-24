@@ -1,8 +1,15 @@
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import { Radio, MapPin, Clock, Users, User } from 'lucide-react-native';
+import { useAuth } from '@/contexts/AuthContext';
+import { ActivityIndicator, View } from 'react-native';
 // import { IncidentAlertNotification } from '@/components/IncidentAlertNotification';
 
 export default function ResponderTabLayout() {
+  const { user, isLoading } = useAuth();
+  if (isLoading) return <View className="flex-1 items-center justify-center"><ActivityIndicator /></View>;
+  if (!user) return <Redirect href="/(auth)/login" />;
+  if (user.role !== 'responder') return <Redirect href="/" />;
+
   return (
       <Tabs
         screenOptions={{
