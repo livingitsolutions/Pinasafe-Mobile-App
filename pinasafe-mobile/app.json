@@ -10,9 +10,6 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "config": {
-        "googleMapsApiKey": "AIzaSyDkYyrir1sBjbOXedIvyyn6mbGvJX3VSjE"
-      },
       "bundleIdentifier": "com.andreiflix.pinasafemobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -26,11 +23,6 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyDkYyrir1sBjbOXedIvyyn6mbGvJX3VSjE"
-        }
-      },
       "package": "com.andreiflix.pinasafemobile"
     },
     "web": {
