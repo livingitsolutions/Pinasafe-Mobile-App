@@ -52,7 +52,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
   const mapRef = useRef<MapView>(null);
   // Fix pollInterval type for React Native
   const pollInterval = useRef<number | null>(null);
-  const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || 'AIzaSyDkYyrir1sBjbOXedIvyyn6mbGvJX3VSjE';
+  const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
   // Move helpers above usage
   const getIncidentIcon = (type: string) => {
