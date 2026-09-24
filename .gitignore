@@ -1,0 +1,9 @@
+node_modules/
+.env
+
+# Runtime logs
+*.log
+
+# Editor temporary files
+*.swp
+*.swo

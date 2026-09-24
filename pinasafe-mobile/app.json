@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "Pinasafe Mobile",
+    "slug": "pinasafe-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/logo_pinasafe.png",
+    "scheme": "pinasafemobile",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "config": {
+        "googleMapsApiKey": "AIzaSyDkYyrir1sBjbOXedIvyyn6mbGvJX3VSjE"
+      },
+      "bundleIdentifier": "com.andreiflix.pinasafemobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/logo_pinasafe.png",
+        "monochromeImage": "./assets/images/logo_pinasafe_mono.png"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDkYyrir1sBjbOXedIvyyn6mbGvJX3VSjE"
+        }
+      },
+      "package": "com.andreiflix.pinasafemobile"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/logo_pinasafe.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "bff585d6-6ba5-4e1e-b6ba-0b1aa05c7df9"
+      }
+    },
+    "owner": "andreiflix"
+  }
+}
