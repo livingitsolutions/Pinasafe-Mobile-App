@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal, ActivityIndicator } from 'react-native';
 import { TriangleAlert as AlertTriangle, X, MapPin, Clock, UserCheck, Users, ChevronDown, FileText } from 'lucide-react-native';
-import { reactNativeAudioAlertService, IncidentAlert } from '@/services/ReactNativeAudioAlertService';
+import { reactNativeAudioAlertService, IncidentAlert } from '@/services/alertAudio';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEmergency } from '@/contexts/EmergencyContext';
 import personnelService from '@/services/personnelService';
