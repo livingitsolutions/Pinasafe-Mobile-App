@@ -46,6 +46,18 @@ const validateLogin = [
   handleValidationErrors
 ];
 
+const validatePersonnelInvitationAcceptance = [
+  body('token')
+    .isString()
+    .matches(/^[A-Za-z0-9_-]{43}$/)
+    .withMessage('Valid invitation token is required'),
+  body('password')
+    .isString()
+    .isLength({ min: 6 })
+    .withMessage('Password must be at least 6 characters'),
+  handleValidationErrors
+];
+
 // Emergency report validation
 const validateEmergencyReport = [
   body('type')
@@ -173,6 +185,7 @@ const validatePagination = [
 module.exports = {
   validateRegister,
   validateLogin,
+  validatePersonnelInvitationAcceptance,
   validateEmergencyReport,
   validateAlert,
   validatePersonnelInvitation,

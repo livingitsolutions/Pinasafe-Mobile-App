@@ -1,12 +1,80 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
-const { validateRegister, validateLogin } = require('../middleware/validation');
+const {
+  validateRegister,
+  validateLogin,
+  validatePersonnelInvitationAcceptance
+} = require('../middleware/validation');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
+
+router.post(
+  '/personnel-invitations/accept',
+  validatePersonnelInvitationAcceptance,
+  async (req, res) => {
+    try {
+      const { token, password } = req.body;
+      const supabase = getClient();
+
+      const tokenHash = crypto
+        .createHash('sha256')
+        .update(token)
+        .digest('hex');
+
+      const passwordHash = await bcrypt.hash(password, 12);
+
+      const { error } = await supabase.rpc('accept_personnel_invitation', {
+        p_token_hash: tokenHash,
+        p_password_hash: passwordHash
+      });
+
+      if (error) {
+        const databaseMessage = error.message || '';
+
+        if (databaseMessage.includes('INVALID_INVITATION')) {
+          return res.status(400).json({
+            error: 'Invalid invitation'
+          });
+        }
+
+        if (databaseMessage.includes('INVITATION_NOT_PENDING')) {
+          return res.status(409).json({
+            error: 'Invitation is no longer available'
+          });
+        }
+
+        if (databaseMessage.includes('INVITATION_EXPIRED')) {
+          return res.status(410).json({
+            error: 'Invitation has expired'
+          });
+        }
+
+        if (databaseMessage.includes('EMAIL_ALREADY_EXISTS')) {
+          return res.status(409).json({
+            error: 'An account already exists for this email'
+          });
+        }
+
+        return res.status(500).json({
+          error: 'Failed to accept invitation'
+        });
+      }
+
+      return res.status(201).json({
+        message: 'Personnel invitation accepted successfully'
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Failed to accept invitation'
+      });
+    }
+  }
+);
 
 router.post('/register', validateRegister, async (req, res) => {
   try {
