@@ -23,7 +23,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
- Security middleware
+// Security middleware
 app.use(helmet());
 app.use(cors({
   origin: process.env.CORS_ORIGIN || '*',
@@ -60,19 +60,6 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: '1.0.0'
   });
-});
-
-// simple logger for all requests
-
-app.use(express.json()); // ensure body is parsed
-app.use((req, res, next) => {
-  console.log('⬇️ Incoming request:', {
-    method: req.method,
-    path: req.originalUrl,
-    headers: req.headers,
-    body: req.body
-  });
-  next();
 });
 
 // API routes

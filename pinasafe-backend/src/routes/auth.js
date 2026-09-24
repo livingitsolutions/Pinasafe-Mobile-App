@@ -94,14 +94,10 @@ router.post('/login', validateLogin, async (req, res) => {
       .maybeSingle();
 
     if (!user) {
-      console.log('Login attempt with invalid email:', email);
-      console.log('Supabase error:', error);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
-
-    console.log('Password validation result for', email, ':', isValidPassword);
 
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid email or password' });

@@ -167,8 +167,6 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       insertData.specializations = specializations;
     }
 
-    console.log('Inserting personnel with data:', insertData);
-
     const { data: personnel, error } = await supabase
       .from('personnel')
       .insert(insertData)
@@ -209,7 +207,6 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
 router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id'), async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('Update personnel request body:', req.body);
 
     const {
       contactNumber,
@@ -269,7 +266,6 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
     if (city !== undefined) userUpdateData.city = city;
     if (province !== undefined) userUpdateData.province = province;
 
-    console.log('Updating personnel with data:', updateData);
 
     const { data: updatedPersonnel, error: updateError } = await supabase
       .from('personnel')
