@@ -7,7 +7,7 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 
 
-const { connectDatabase } = require('./config/database');
+const { connectDatabase, validateConfiguration } = require('./config/database');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const emergencyRoutes = require('./routes/emergency');
@@ -90,6 +90,8 @@ app.use(errorHandler);
 // Start server
 async function startServer() {
   try {
+    validateConfiguration();
+
     // Connect to database
     await connectDatabase();
     console.log('✅ Database connected successfully');
@@ -101,7 +103,7 @@ async function startServer() {
       console.log(`🔗 Health check: http://localhost:${PORT}/health`);
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    console.error('❌ Failed to start server:', error.message);
     process.exit(1);
   }
 }
