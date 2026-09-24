@@ -1,3 +1,6 @@
+import { prepareImageUpload } from "./imageUpload";
+import { AI_IMAGE_FIELD_NAME } from "./imageUpload.types";
+
 export interface ClassificationResult {
   label: "fire" | "road" | "other";
   confidence: number;
@@ -15,12 +18,33 @@ export interface EmergencyEvidence {
   address: string | null;
 }
 
+type ClassificationFailureKind =
+  | "timeout"
+  | "http-client"
+  | "http-server"
+  | "network"
+  | "malformed-response"
+  | "unknown";
+
+class AIClassificationError extends Error {
+  constructor(
+    readonly kind: ClassificationFailureKind,
+    message: string,
+    readonly status?: number
+  ) {
+    super(message);
+    this.name = "AIClassificationError";
+  }
+}
+
 class AIClassificationService {
   // private readonly API_ENDPOINT =
   //   process.env.AI_ENDPOINT_URL ||
   //   "https://jubilant-journey-69rgxr695v6r35jrp-8000.app.github.dev/predict";
   
-  private readonly API_ENDPOINT = process.env.AI_ENDPOINT_URL || "https://image-ai-classifier-1.onrender.com/predict";
+  private readonly API_ENDPOINT =
+    process.env.EXPO_PUBLIC_AI_ENDPOINT_URL ||
+    "https://image-ai-classifier-1.onrender.com/predict";
 
   private readonly CONFIDENCE_THRESHOLD = 0.75;
   private readonly TIMEOUT = 30000; // 30 seconds
@@ -28,18 +52,25 @@ class AIClassificationService {
   /** ✅ Main Classification Method */
   async classifyImage(imageUri: string): Promise<ClassificationResult> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.TIMEOUT);
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, this.TIMEOUT);
 
     try {
       const formData = new FormData();
-      formData.append(
-        "file",
-        {
-          uri: imageUri,
-          type: "image/jpeg",
-          name: "emergency.jpg",
-        } as any
-      );
+      const upload = await prepareImageUpload(imageUri);
+
+      if (upload.filename) {
+        formData.append(
+          AI_IMAGE_FIELD_NAME,
+          upload.image as Blob,
+          upload.filename
+        );
+      } else {
+        formData.append(AI_IMAGE_FIELD_NAME, upload.image as any);
+      }
 
       const response = await fetch(this.API_ENDPOINT, {
         method: "POST",
@@ -47,44 +78,91 @@ class AIClassificationService {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.status}`);
+        throw new AIClassificationError(
+          response.status >= 500 ? "http-server" : "http-client",
+          `AI endpoint returned HTTP ${response.status}.`,
+          response.status
+        );
       }
 
-      const apiResult = await response.json();
-      console.log("✅ API Raw Result:", apiResult);
+      let apiResult: unknown;
+      try {
+        apiResult = await response.json();
+      } catch {
+        throw new AIClassificationError(
+          "malformed-response",
+          "AI endpoint returned invalid JSON."
+        );
+      }
+
+      if (!apiResult || typeof apiResult !== "object") {
+        throw new AIClassificationError(
+          "malformed-response",
+          "AI endpoint returned an unexpected response."
+        );
+      }
 
       return this.transformAPIResponse(apiResult);
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      console.error("❌ AI Classification failed:", error);
+    } catch (error: unknown) {
+      const failure = this.classifyFailure(error, didTimeout);
 
-      const isTimeout =
-        error?.name === "AbortError" || error?.message?.includes("aborted");
-      const isNetwork =
-        error?.message?.includes("Network") ||
-        error?.message?.includes("fetch") ||
-        error?.message?.includes("Failed to connect");
+      // Evidence, URIs, response bodies, and location are intentionally omitted.
+      console.error("AI classification request failed", {
+        kind: failure.kind,
+        status: failure.status,
+      });
+
+      const reason =
+        failure.kind === "timeout"
+          ? "AI request timed out."
+          : failure.kind === "http-client"
+          ? failure.status === 422
+            ? "AI service rejected the image upload (HTTP 422)."
+            : `AI request was rejected (HTTP ${failure.status}).`
+          : failure.kind === "http-server"
+          ? "AI service is temporarily unavailable."
+          : failure.kind === "network"
+          ? "Network or browser connection to the AI service failed."
+          : failure.kind === "malformed-response"
+          ? "AI service returned an invalid response."
+          : "AI classification failed.";
 
       return {
         label: "other",
         confidence: 0,
         status: "invalid",
         action: "uncertain",
-        reason: isTimeout
-          ? "AI request timed out."
-          : isNetwork
-          ? "Network connection failed."
-          : "AI classification failed.",
+        reason,
         caption: "Unable to classify the image.",
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
+  private classifyFailure(
+    error: unknown,
+    didTimeout: boolean
+  ): AIClassificationError {
+    if (didTimeout) {
+      return new AIClassificationError("timeout", "AI request timed out.");
+    }
+
+    if (error instanceof AIClassificationError) return error;
+
+    if (error instanceof TypeError) {
+      return new AIClassificationError(
+        "network",
+        "Network or CORS request failed."
+      );
+    }
+
+    return new AIClassificationError("unknown", "AI classification failed.");
+  }
+
   /** ✅ Convert API → internal standardized format */
-  private transformAPIResponse(apiResult: any): ClassificationResult {
+  private transformAPIResponse(apiResult: Record<string, any>): ClassificationResult {
     return {
       label: this.mapLabelToType(apiResult.label),
       confidence: apiResult.confidence ?? 0,
@@ -339,6 +417,4 @@ export const aiClassificationService = new AIClassificationService();
 // }
 
 // export const aiClassificationService = new AIClassificationService();
-
-
 
