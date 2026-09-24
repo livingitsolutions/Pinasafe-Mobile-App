@@ -999,7 +999,7 @@ import { apiService } from '@/services/apiService';
 import { EmergencyEvidence, ClassificationResult } from '@/services/AIClassificationService';
 import { organizationAlertService, AlertDispatch } from '@/services/organizationAlertService';
 import { incidentClusteringService, ClusteredIncident } from '@/hooks/incidentClusteringService';
-import { reactNativeAudioAlertService } from '@/services/ReactNativeAudioAlertService';
+import { reactNativeAudioAlertService } from '@/services/alertAudio';
 import { useAuth } from './AuthContext';
 
 export interface EmergencyReport {
@@ -1414,4 +1414,3 @@ export function useEmergency() {
   }
   return context;
 }
-

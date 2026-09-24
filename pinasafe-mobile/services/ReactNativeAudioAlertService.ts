@@ -1,16 +1,7 @@
 import { Audio } from 'expo-av';
-import { Platform } from 'react-native';
+import type { IncidentAlert } from './alertAudio.types';
 
-export interface IncidentAlert {
-  reportId: string;
-  incidentType: string;
-  location: string;
-  priority: string;
-  timestamp: Date;
-  description?: string;
-  status?: string;
-  assignedTeamId?: string;
-}
+export type { IncidentAlert } from './alertAudio.types';
 
 class ReactNativeAudioAlertService {
   private sound: Audio.Sound | null = null;

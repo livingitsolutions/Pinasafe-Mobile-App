@@ -1,42 +1,11 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, Platform, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
 import { Navigation, MapPin, Users, Clock, Flame, Car, Siren, Zap, AlertTriangle, Droplets, Wind, House } from 'lucide-react-native';
 import { apiService } from '@/services/apiService';
 import { locationTrackingService } from '@/services/locationTrackingService';
-
-let MapView: any;
-let Marker: any;
-let PROVIDER_GOOGLE: any;
-let Polyline: any;
-let Circle: any;
-let MapViewDirections: any;
-
-try {
-  const maps = require('react-native-maps');
-  MapView = maps.default;
-  Marker = maps.Marker;
-  PROVIDER_GOOGLE = maps.PROVIDER_GOOGLE;
-  Polyline = maps.Polyline;
-  Circle = maps.Circle;
-} catch (e) {
-  console.warn('react-native-maps not available');
-}
-
-try {
-  MapViewDirections = require('react-native-maps-directions').default;
-} catch (e) {
-  console.warn('react-native-maps-directions not available');
-}
-
-interface LiveTrackingMapProps {
-  emergencyId: string;
-  incidentLocation: {
-    latitude: number;
-    longitude: number;
-  };
-  incidentType: string;
-  onClose?: () => void;
-}
+import MapView, { Circle, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapViewDirections from 'react-native-maps-directions';
+import type { LiveTrackingMapProps } from './LiveTrackingMap.types';
 
 export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
   emergencyId,
@@ -205,23 +174,6 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
     );
   }
 
-  if (!MapView) {
-    return (
-      <View className="flex-1 items-center justify-center bg-gray-50 p-6">
-        <MapPin size={64} color="#9CA3AF" strokeWidth={1.5} />
-        <Text className="mt-4 text-lg font-semibold text-gray-900">Map Not Available</Text>
-        <Text className="mt-2 text-center text-gray-600">
-          Live tracking map is only available on mobile devices. Please test on a physical device or emulator.
-        </Text>
-        {onClose && (
-          <TouchableOpacity onPress={onClose} className="mt-6 bg-blue-600 px-6 py-3 rounded-lg">
-            <Text className="text-white font-semibold">Close</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  }
-
   return (
     <View className="flex-1">
       <MapView
@@ -229,7 +181,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
         initialRegion={initialRegion}
-        showPointsOfInterest={false}
+        showsPointsOfInterest={false}
         showsUserLocation={true}
         showsMyLocationButton={true}
         showsTraffic={true}

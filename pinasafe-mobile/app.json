@@ -4,7 +4,7 @@
     "slug": "pinasafe-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo_pinasafe.png",
+    "icon": "./assets/images/icon.png",
     "scheme": "pinasafemobile",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -21,7 +21,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/logo_pinasafe.png",
+        "foregroundImage": "./assets/images/adaptive-icon.png",
         "monochromeImage": "./assets/images/logo_pinasafe_mono.png"
       },
       "edgeToEdgeEnabled": true,
@@ -35,7 +35,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/logo_pinasafe.png"
+      "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
       "expo-router"
