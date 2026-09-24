@@ -2,6 +2,7 @@ const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -100,7 +101,7 @@ router.post('/start/:emergencyId', authenticateToken, requireRole(['responder'])
       .single();
 
     if (error) {
-      console.error('Start tracking error:', error);
+      safeLogger.error('location_tracking.start_failed');
       return res.status(500).json({ error: 'Failed to start location tracking' });
     }
 
@@ -110,7 +111,7 @@ router.post('/start/:emergencyId', authenticateToken, requireRole(['responder'])
     });
 
   } catch (error) {
-    console.error('Start tracking error:', error);
+    safeLogger.error('location_tracking.start_failed');
     res.status(500).json({ error: 'Failed to start location tracking' });
   }
 });
@@ -191,7 +192,7 @@ router.put('/update/:emergencyId', authenticateToken, requireRole(['responder'])
     });
 
   } catch (error) {
-    console.error('Update location error:', error);
+    safeLogger.error('location_tracking.update_failed');
     res.status(500).json({ error: 'Failed to update location' });
   }
 });
@@ -262,7 +263,7 @@ router.post('/stop/:emergencyId', authenticateToken, requireRole(['responder']),
     });
 
   } catch (error) {
-    console.error('Stop tracking error:', error);
+    safeLogger.error('location_tracking.stop_failed');
     res.status(500).json({ error: 'Failed to stop location tracking' });
   }
 });
@@ -304,14 +305,14 @@ router.get('/emergency/:emergencyId', authenticateToken, validateUUID('emergency
       .order('updated_at', { ascending: false });
 
     if (error) {
-      console.error('Get locations error:', error);
+      safeLogger.error('location_tracking.emergency_list_failed');
       return res.status(500).json({ error: 'Failed to fetch locations' });
     }
 
     res.json({ data: locations || [] });
 
   } catch (error) {
-    console.error('Get locations error:', error);
+    safeLogger.error('location_tracking.emergency_list_failed');
     res.status(500).json({ error: 'Failed to fetch locations' });
   }
 });
@@ -352,14 +353,14 @@ router.get('/team/:teamId', authenticateToken, validateUUID('teamId'), async (re
       .order('updated_at', { ascending: false });
 
     if (error) {
-      console.error('Get team locations error:', error);
+      safeLogger.error('location_tracking.team_list_failed');
       return res.status(500).json({ error: 'Failed to fetch team locations' });
     }
 
     res.json({ data: locations || [] });
 
   } catch (error) {
-    console.error('Get team locations error:', error);
+    safeLogger.error('location_tracking.team_list_failed');
     res.status(500).json({ error: 'Failed to fetch team locations' });
   }
 });

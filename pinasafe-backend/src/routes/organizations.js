@@ -1,6 +1,7 @@
 const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -16,14 +17,14 @@ router.get('/', authenticateToken, requireRole(['admin', 'responder']), async (r
       .order('name');
 
     if (error) {
-      console.error('Get organizations error:', error);
+      safeLogger.error('organizations.list_failed');
       return res.status(500).json({ error: 'Failed to fetch organizations' });
     }
 
     res.json({ data: organizations });
 
   } catch (error) {
-    console.error('Get organizations error:', error);
+    safeLogger.error('organizations.list_failed');
     res.status(500).json({ error: 'Failed to fetch organizations' });
   }
 });
@@ -51,7 +52,7 @@ router.get('/readiness', authenticateToken, requireRole(['admin', 'responder']),
     const { data: organizations, error: orgError } = await orgQuery.order('name');
 
     if (orgError) {
-      console.error('Get organizations error:', orgError);
+      safeLogger.error('organizations.readiness_org_failed');
       return res.status(500).json({ error: 'Failed to fetch organizations' });
     }
 
@@ -167,7 +168,7 @@ router.get('/readiness', authenticateToken, requireRole(['admin', 'responder']),
     res.json({ data: readinessData });
 
   } catch (error) {
-    console.error('Get readiness error:', error);
+    safeLogger.error('organizations.readiness_failed');
     res.status(500).json({ error: 'Failed to fetch readiness data' });
   }
 });
@@ -185,7 +186,6 @@ router.get('/readiness', authenticateToken, requireRole(['admin', 'responder']),
 //       .maybeSingle();
 
 //     if (error) {
-//       console.error('Get organization by ID error:', error);
 //       return res.status(500).json({ error: 'Failed to fetch organization' });
 //     }
 
@@ -196,7 +196,6 @@ router.get('/readiness', authenticateToken, requireRole(['admin', 'responder']),
 //     res.json({ data: organization });
 
 //   } catch (error) {
-//     console.error('Get organization by ID error:', error);
 //     res.status(500).json({ error: 'Failed to fetch organization' });
 //   }
 // });
@@ -208,8 +207,6 @@ router.get('/:id/personnel', authenticateToken, requireRole(['admin', 'responder
   try {
     const { id } = req.params;
     const { user } = req;
-    const supabase = getClient();
-
     if (!user.organization_id) {
       return res.status(400).json({ error: 'User not assigned to an organization' });
     }
@@ -224,14 +221,14 @@ router.get('/:id/personnel', authenticateToken, requireRole(['admin', 'responder
       .order('name');
 
     if (error) {
-      console.error('Get personnel error:', error);
+      safeLogger.error('organizations.personnel_list_failed');
       return res.status(500).json({ error: 'Failed to fetch personnel' });
     }
 
     res.json({ data: personnel });
 
   } catch (error) {
-    console.error('Get personnel error:', error);
+    safeLogger.error('organizations.personnel_list_failed');
     res.status(500).json({ error: 'Failed to fetch personnel' });
   }
 });

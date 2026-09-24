@@ -1,9 +1,10 @@
 require('dotenv').config(); 
 const express = require('express');
 const helmet = require('helmet');
-const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const { createRequestLogger } = require('./utils/requestLogger');
+const safeLogger = require('./utils/safeLogger');
 
 
 const { connectDatabase, validateConfiguration } = require('./config/database');
@@ -48,7 +49,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logging
 if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('combined'));
+  app.use(createRequestLogger());
 }
 
 // Health check endpoint
@@ -101,7 +102,7 @@ async function startServer() {
       console.log(`🔗 Health check: http://localhost:${PORT}/health`);
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error.message);
+    safeLogger.error('server.start_failed');
     process.exit(1);
   }
 }

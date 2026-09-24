@@ -4,6 +4,7 @@ const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateEmergencyReport, validateUUID, validatePagination } = require('../middleware/validation');
 const clusteringService = require('../services/incidentClusteringService');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -34,7 +35,7 @@ router.get('/', authenticateToken, validatePagination, async (req, res) => {
         .range(offset, offset + parseInt(limit) - 1);
 
       if (error) {
-        console.error('Get reports error:', error);
+        safeLogger.error('emergency.reports_list_failed');
         return res.status(500).json({ error: 'Failed to fetch emergency reports' });
       }
       reports = data || [];
@@ -50,7 +51,7 @@ router.get('/', authenticateToken, validatePagination, async (req, res) => {
         .range(offset, offset + parseInt(limit) - 1);
 
       if (error) {
-        console.error('Get reports error:', error);
+        safeLogger.error('emergency.reports_list_failed');
         return res.status(500).json({ error: 'Failed to fetch emergency reports' });
       }
       reports = data || [];
@@ -78,7 +79,7 @@ router.get('/', authenticateToken, validatePagination, async (req, res) => {
         .range(offset, offset + parseInt(limit) - 1);
 
       if (error) {
-        console.error('Get organization reports error:', error);
+        safeLogger.error('emergency.organization_reports_list_failed');
         return res.status(500).json({ error: 'Failed to fetch organization reports' });
       }
 
@@ -115,7 +116,7 @@ router.get('/', authenticateToken, validatePagination, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get reports error:', error);
+    safeLogger.error('emergency.reports_list_failed');
     res.status(500).json({ error: 'Failed to fetch emergency reports' });
   }
 });
@@ -159,7 +160,7 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
       .single();
 
     if (error) {
-      console.error('Create report error:', error);
+      safeLogger.error('emergency.report_create_failed');
       return res.status(500).json({ error: 'Failed to create emergency report' });
     }
 
@@ -181,7 +182,7 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
         report.cluster_id = clusterId;
       }
     } catch (clusterError) {
-      console.error('Clustering error:', clusterError);
+      safeLogger.error('emergency.report_clustering_failed');
     }
 
     res.status(201).json({
@@ -190,7 +191,7 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
     });
 
   } catch (error) {
-    console.error('Create report error:', error);
+    safeLogger.error('emergency.report_create_failed');
     res.status(500).json({ error: 'Failed to create emergency report' });
   }
 });
@@ -257,7 +258,7 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
           req.user.id
         );
       } catch (notifyError) {
-        console.error('Error notifying cluster subscribers:', notifyError);
+        safeLogger.error('emergency.cluster_notification_failed');
       }
     }
 
@@ -267,7 +268,7 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
     });
 
   } catch (error) {
-    console.error('Update report error:', error);
+    safeLogger.error('emergency.report_update_failed');
     res.status(500).json({ error: 'Failed to update emergency report' });
   }
 });
@@ -318,7 +319,7 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin', 'respon
       .single();
 
     if (error || !updatedReport) {
-      console.error('Assign team error:', error);
+      safeLogger.error('emergency.team_assignment_failed');
       return res.status(404).json({ error: 'Emergency report not found' });
     }
 
@@ -328,7 +329,7 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin', 'respon
     });
 
   } catch (error) {
-    console.error('Assign team error:', error);
+    safeLogger.error('emergency.team_assignment_failed');
     res.status(500).json({ error: 'Failed to assign team' });
   }
 });
@@ -380,7 +381,7 @@ router.get('/:id', authenticateToken, validateUUID('id'), async (req, res) => {
     res.json({ data: formattedReport });
 
   } catch (error) {
-    console.error('Get report error:', error);
+    safeLogger.error('emergency.report_get_failed');
     res.status(500).json({ error: 'Failed to fetch emergency report' });
   }
 });
@@ -419,7 +420,7 @@ router.post('/calls', authenticateToken, async (req, res) => {
       .single();
 
     if (error) {
-      console.error('Log call error:', error);
+      safeLogger.error('emergency.call_log_failed');
       return res.status(500).json({ error: 'Failed to log emergency call' });
     }
 
@@ -429,7 +430,7 @@ router.post('/calls', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Log call error:', error);
+    safeLogger.error('emergency.call_log_failed');
     res.status(500).json({ error: 'Failed to log emergency call' });
   }
 });
@@ -446,14 +447,14 @@ router.get('/calls/user', authenticateToken, async (req, res) => {
       .order('call_time', { ascending: false });
 
     if (error) {
-      console.error('Get calls error:', error);
+      safeLogger.error('emergency.calls_list_failed');
       return res.status(500).json({ error: 'Failed to fetch emergency calls' });
     }
 
     res.json({ data: calls });
 
   } catch (error) {
-    console.error('Get calls error:', error);
+    safeLogger.error('emergency.calls_list_failed');
     res.status(500).json({ error: 'Failed to fetch emergency calls' });
   }
 });

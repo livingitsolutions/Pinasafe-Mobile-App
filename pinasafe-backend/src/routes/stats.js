@@ -1,6 +1,7 @@
 const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -63,7 +64,7 @@ router.get('/emergency', authenticateToken, requireRole(['responder', 'admin']),
     });
 
   } catch (error) {
-    console.error('Get emergency stats error:', error);
+    safeLogger.error('stats.emergency_failed');
     res.status(500).json({ error: 'Failed to fetch emergency statistics' });
   }
 });
@@ -107,7 +108,7 @@ router.get('/user', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Get user stats error:', error);
+    safeLogger.error('stats.user_failed');
     res.status(500).json({ error: 'Failed to fetch user statistics' });
   }
 });

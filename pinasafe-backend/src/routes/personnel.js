@@ -8,6 +8,7 @@ const {
   authenticatedRateLimiter,
   PERSONNEL_INVITATION_RATE_LIMIT
 } = require('../middleware/authenticatedRateLimit');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -35,14 +36,14 @@ router.get('/', authenticateToken, requireRole(['admin', 'super_admin']), async 
     const { data: personnel, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Get personnel error:', error);
+      safeLogger.error('personnel.list_failed');
       return res.status(500).json({ error: 'Failed to fetch personnel' });
     }
 
     res.json({ data: personnel });
 
   } catch (error) {
-    console.error('Get personnel error:', error);
+    safeLogger.error('personnel.list_failed');
     res.status(500).json({ error: 'Failed to fetch personnel' });
   }
 });
@@ -334,15 +335,9 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
       .single();
 
     if (updateError) {
-      console.error('Update personnel error details:', {
-        message: updateError.message,
-        details: updateError.details,
-        hint: updateError.hint,
-        code: updateError.code
-      });
+      safeLogger.error('personnel.update_failed');
       return res.status(500).json({
-        error: 'Failed to update personnel',
-        details: updateError.message
+        error: 'Failed to update personnel'
       });
     }
 
@@ -354,7 +349,7 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
         .eq('id', existingPersonnel.user_id);
 
       if (userUpdateError) {
-        console.error('Update user address error:', userUpdateError);
+        safeLogger.error('personnel.user_address_update_failed');
       }
     }
 
@@ -381,10 +376,9 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
     });
 
   } catch (error) {
-    console.error('Update personnel error:', error);
+    safeLogger.error('personnel.update_failed');
     res.status(500).json({
-      error: 'Server error updating personnel',
-      details: error.message
+      error: 'Server error updating personnel'
     });
   }
 });
@@ -414,7 +408,7 @@ router.delete('/:id', authenticateToken, requireRole(['admin']), validateUUID('i
     res.json({ message: 'Personnel deactivated successfully' });
 
   } catch (error) {
-    console.error('Delete personnel error:', error);
+    safeLogger.error('personnel.deactivate_failed');
     res.status(500).json({ error: 'Failed to deactivate personnel' });
   }
 });
@@ -440,14 +434,14 @@ router.get('/rescue-members', authenticateToken, requireRole(['admin']), async (
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('Get rescue members error:', error);
+      safeLogger.error('personnel.rescue_members_list_failed');
       return res.status(500).json({ error: 'Failed to fetch rescue members' });
     }
 
     res.json({ data: rescueMembers });
 
   } catch (error) {
-    console.error('Get rescue members error:', error);
+    safeLogger.error('personnel.rescue_members_list_failed');
     res.status(500).json({ error: 'Failed to fetch rescue members' });
   }
 });
@@ -469,7 +463,7 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
       .maybeSingle();
 
     if (personnelError) {
-      console.error('Get personnel by user ID error:', personnelError);
+      safeLogger.error('personnel.user_lookup_failed');
       return res.status(500).json({ error: 'Failed to fetch personnel' });
     }
 
@@ -507,7 +501,7 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
     res.json({ data: personnel });
 
   } catch (error) {
-    console.error('Get personnel by user ID error:', error);
+    safeLogger.error('personnel.user_lookup_failed');
     res.status(500).json({ error: 'Failed to fetch personnel' });
   }
 });

@@ -1,4 +1,5 @@
 const { getClient } = require('../config/database');
+const safeLogger = require('../utils/safeLogger');
 const {
   extractBearerToken,
   verifyAccessToken
@@ -48,7 +49,7 @@ const authenticateToken = async (req, res, next) => {
       return res.status(403).json({ error: 'Token expired' });
     }
 
-    console.error('Auth middleware error:', error);
+    safeLogger.error('auth.authentication_failed');
     res.status(500).json({ error: 'Authentication failed' });
   }
 };

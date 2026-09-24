@@ -5,7 +5,12 @@ const handleValidationErrors = (req, res, next) => {
   if (!errors.isEmpty()) {
     return res.status(400).json({
       error: 'Validation failed',
-      details: errors.array()
+      details: errors.array().map(({ type, msg, path, location, param }) => ({
+        type,
+        msg,
+        path: path || param,
+        location
+      }))
     });
   }
   next();

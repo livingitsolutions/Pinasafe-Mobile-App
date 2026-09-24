@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validateAlert, validateUUID } = require('../middleware/validation');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -41,14 +42,14 @@ router.get('/', authenticateToken, async (req, res) => {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Get alerts error:', error);
+      safeLogger.error('alerts.list_failed');
       return res.status(500).json({ error: 'Failed to fetch alerts' });
     }
 
     res.json({ data: alerts });
 
   } catch (error) {
-    console.error('Get alerts error:', error);
+    safeLogger.error('alerts.list_failed');
     res.status(500).json({ error: 'Failed to fetch alerts' });
   }
 });
@@ -85,7 +86,7 @@ router.post('/', authenticateToken, requireRole(['responder', 'admin']), validat
       .single();
 
     if (error) {
-      console.error('Create alert error:', error);
+      safeLogger.error('alerts.create_failed');
       return res.status(500).json({ error: 'Failed to create alert' });
     }
 
@@ -95,7 +96,7 @@ router.post('/', authenticateToken, requireRole(['responder', 'admin']), validat
     });
 
   } catch (error) {
-    console.error('Create alert error:', error);
+    safeLogger.error('alerts.create_failed');
     res.status(500).json({ error: 'Failed to create alert' });
   }
 });
@@ -119,7 +120,7 @@ router.put('/:id/dismiss', authenticateToken, requireRole(['responder', 'admin']
     res.json({ message: 'Alert dismissed successfully' });
 
   } catch (error) {
-    console.error('Dismiss alert error:', error);
+    safeLogger.error('alerts.dismiss_failed');
     res.status(500).json({ error: 'Failed to dismiss alert' });
   }
 });
@@ -142,7 +143,7 @@ router.get('/:id', authenticateToken, validateUUID('id'), async (req, res) => {
     res.json({ data: alert });
 
   } catch (error) {
-    console.error('Get alert error:', error);
+    safeLogger.error('alerts.get_failed');
     res.status(500).json({ error: 'Failed to fetch alert' });
   }
 });

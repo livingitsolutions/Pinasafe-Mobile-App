@@ -3,6 +3,7 @@ const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
 const clusteringService = require('../services/incidentClusteringService');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ router.get('/my-clusters', authenticateToken, async (req, res) => {
 
     res.json({ data: clustersWithInfo });
   } catch (error) {
-    console.error('Get user clusters error:', error);
+    safeLogger.error('clusters.user_list_failed');
     res.status(500).json({ error: 'Failed to fetch user clusters' });
   }
 });
@@ -66,7 +67,7 @@ router.get('/:clusterId/info', authenticateToken, validateUUID('clusterId'), asy
     const clusterInfo = await clusteringService.getClusterInfo(clusterId);
     res.json({ data: clusterInfo });
   } catch (error) {
-    console.error('Get cluster info error:', error);
+    safeLogger.error('clusters.info_failed');
     res.status(500).json({ error: 'Failed to fetch cluster information' });
   }
 });
@@ -108,7 +109,7 @@ router.get('/:clusterId/updates', authenticateToken, validateUUID('clusterId'), 
     const updates = await clusteringService.getClusterUpdates(clusterId);
     res.json({ data: updates });
   } catch (error) {
-    console.error('Get cluster updates error:', error);
+    safeLogger.error('clusters.updates_failed');
     res.status(500).json({ error: 'Failed to fetch cluster updates' });
   }
 });
@@ -169,7 +170,7 @@ router.post('/:clusterId/updates', authenticateToken, requireRole(['responder', 
       }
     });
   } catch (error) {
-    console.error('Create cluster update error:', error);
+    safeLogger.error('clusters.update_create_failed');
     res.status(500).json({ error: 'Failed to create cluster update' });
   }
 });
@@ -210,7 +211,7 @@ router.get('/statistics', authenticateToken, requireRole(['responder', 'admin'])
 
     res.json({ data: clusterStats });
   } catch (error) {
-    console.error('Get cluster statistics error:', error);
+    safeLogger.error('clusters.statistics_failed');
     res.status(500).json({ error: 'Failed to fetch cluster statistics' });
   }
 });

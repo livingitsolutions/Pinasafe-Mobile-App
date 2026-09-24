@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { parseCorsOrigins } = require('./cors');
+const safeLogger = require('../utils/safeLogger');
 
 let supabase;
 
@@ -39,13 +40,13 @@ async function connectDatabase() {
 
     const { data, error } = await supabase.from('users').select('count').limit(1);
     if (error && error.code !== 'PGRST116') {
-      console.warn('Supabase connection warning:', error.message);
+      safeLogger.warn('database.connection_warning');
     }
 
     console.log('✅ Supabase connection established successfully');
     return supabase;
   } catch (error) {
-    console.error('❌ Supabase connection failed:', error.message);
+    safeLogger.error('database.connection_failed');
     throw error;
   }
 }

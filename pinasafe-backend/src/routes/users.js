@@ -2,6 +2,7 @@ const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validatePagination } = require('../middleware/validation');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -36,7 +37,7 @@ router.put('/profile', authenticateToken, async (req, res) => {
       .single();
 
     if (error) {
-      console.error('Update profile error:', error);
+      safeLogger.error('users.profile_update_failed');
       return res.status(500).json({ error: 'Failed to update profile' });
     }
 
@@ -46,7 +47,7 @@ router.put('/profile', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Update profile error:', error);
+    safeLogger.error('users.profile_update_failed');
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -81,7 +82,7 @@ router.get('/', authenticateToken, requireRole(['admin']), validatePagination, a
     const { data: users, error } = await query;
 
     if (error) {
-      console.error('Get users error:', error);
+      safeLogger.error('users.list_failed');
       return res.status(500).json({ error: 'Failed to fetch users' });
     }
 
@@ -95,7 +96,7 @@ router.get('/', authenticateToken, requireRole(['admin']), validatePagination, a
     });
 
   } catch (error) {
-    console.error('Get users error:', error);
+    safeLogger.error('users.list_failed');
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
@@ -145,7 +146,7 @@ router.put('/:id/role', authenticateToken, requireRole(['admin']), async (req, r
     res.json({ message: 'User role updated successfully' });
 
   } catch (error) {
-    console.error('Update user role error:', error);
+    safeLogger.error('users.role_update_failed');
     res.status(500).json({ error: 'Failed to update user role' });
   }
 });

@@ -1,4 +1,5 @@
 const { getClient } = require('../config/database');
+const safeLogger = require('../utils/safeLogger');
 
 class IncidentClusteringService {
   constructor() {
@@ -92,7 +93,7 @@ class IncidentClusteringService {
       .eq('id', primaryIncidentId);
 
     if (updateError) {
-      console.error('Error creating cluster:', updateError);
+      safeLogger.error('clustering.cluster_create_failed');
       throw updateError;
     }
 
@@ -105,7 +106,7 @@ class IncidentClusteringService {
       });
 
     if (subscriberError) {
-      console.error('Error adding subscriber:', subscriberError);
+      safeLogger.error('clustering.subscriber_add_failed');
       throw subscriberError;
     }
 
@@ -121,7 +122,7 @@ class IncidentClusteringService {
       .eq('id', incidentId);
 
     if (updateError) {
-      console.error('Error adding to cluster:', updateError);
+      safeLogger.error('clustering.cluster_add_failed');
       throw updateError;
     }
 
@@ -134,7 +135,7 @@ class IncidentClusteringService {
       });
 
     if (subscriberError && subscriberError.code !== '23505') {
-      console.error('Error adding subscriber:', subscriberError);
+      safeLogger.error('clustering.subscriber_add_failed');
       throw subscriberError;
     }
 
@@ -150,7 +151,7 @@ class IncidentClusteringService {
       .eq('cluster_id', clusterId);
 
     if (subError) {
-      console.error('Error fetching subscribers:', subError);
+      safeLogger.error('clustering.subscribers_fetch_failed');
       throw subError;
     }
 
@@ -166,7 +167,7 @@ class IncidentClusteringService {
       .single();
 
     if (updateError) {
-      console.error('Error creating update:', updateError);
+      safeLogger.error('clustering.update_create_failed');
       throw updateError;
     }
 
@@ -189,7 +190,7 @@ class IncidentClusteringService {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Error fetching cluster updates:', error);
+      safeLogger.error('clustering.updates_fetch_failed');
       throw error;
     }
 
@@ -210,7 +211,7 @@ class IncidentClusteringService {
       .eq('user_id', userId);
 
     if (error) {
-      console.error('Error fetching user clusters:', error);
+      safeLogger.error('clustering.user_clusters_fetch_failed');
       throw error;
     }
 
@@ -229,7 +230,7 @@ class IncidentClusteringService {
       .eq('cluster_id', clusterId);
 
     if (incidentsError) {
-      console.error('Error fetching cluster incidents:', incidentsError);
+      safeLogger.error('clustering.incidents_fetch_failed');
       throw incidentsError;
     }
 
@@ -239,7 +240,7 @@ class IncidentClusteringService {
       .eq('cluster_id', clusterId);
 
     if (subscribersError) {
-      console.error('Error fetching cluster subscribers:', subscribersError);
+      safeLogger.error('clustering.subscribers_fetch_failed');
       throw subscribersError;
     }
 
@@ -250,7 +251,7 @@ class IncidentClusteringService {
       .order('created_at', { ascending: false });
 
     if (updatesError) {
-      console.error('Error fetching cluster updates:', updatesError);
+      safeLogger.error('clustering.updates_fetch_failed');
       throw updatesError;
     }
 

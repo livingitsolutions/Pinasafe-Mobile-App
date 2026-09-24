@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -31,7 +32,7 @@ router.get('/', authenticateToken, requireRole(['admin', 'responder', 'super_adm
     const { data: teams, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Get teams error:', error);
+      safeLogger.error('teams.list_failed');
       return res.status(500).json({ error: 'Failed to fetch teams' });
     }
 
@@ -54,7 +55,7 @@ router.get('/', authenticateToken, requireRole(['admin', 'responder', 'super_adm
     res.json({ data: teamsWithMembers });
 
   } catch (error) {
-    console.error('Get teams error:', error);
+    safeLogger.error('teams.list_failed');
     res.status(500).json({ error: 'Failed to fetch teams' });
   }
 });
@@ -113,7 +114,7 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       .single();
 
     if (error) {
-      console.error('Create team error:', error);
+      safeLogger.error('teams.create_failed');
       if (error.code === '23505') {
         return res.status(400).json({ error: 'A team with this name already exists in your organization' });
       }
@@ -138,7 +139,7 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
     });
 
   } catch (error) {
-    console.error('Create team error:', error);
+    safeLogger.error('teams.create_failed');
     res.status(500).json({ error: 'Failed to create team' });
   }
 });
@@ -204,7 +205,7 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
       .single();
 
     if (error) {
-      console.error('Update team error:', error);
+      safeLogger.error('teams.update_failed');
       if (error.code === '23505') {
         return res.status(400).json({ error: 'A team with this name already exists in your organization' });
       }
@@ -244,7 +245,7 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
     });
 
   } catch (error) {
-    console.error('Update team error:', error);
+    safeLogger.error('teams.update_failed');
     res.status(500).json({ error: 'Failed to update team' });
   }
 });
@@ -294,14 +295,14 @@ router.delete('/:id', authenticateToken, requireRole(['admin']), validateUUID('i
       .eq('organization_id', user.organization_id);
 
     if (deleteError) {
-      console.error('Delete team error:', deleteError);
+      safeLogger.error('teams.delete_failed');
       return res.status(500).json({ error: 'Failed to delete team' });
     }
 
     res.json({ message: 'Team deleted successfully' });
 
   } catch (error) {
-    console.error('Delete team error:', error);
+    safeLogger.error('teams.delete_failed');
     res.status(500).json({ error: 'Failed to delete team' });
   }
 });
@@ -310,8 +311,6 @@ router.post('/:id/members', authenticateToken, requireRole(['admin']), validateU
   try {
     const { id } = req.params;
     const { userId, position } = req.body;
-
-    console.log('Add team member request:', { teamId: id, userId, position, adminId: req.user?.id });
 
     const { user } = req;
     const supabase = getClient();
@@ -375,8 +374,7 @@ router.post('/:id/members', authenticateToken, requireRole(['admin']), validateU
       .single();
 
     if (error) {
-      console.error('Add team member error:', error);
-      console.error('Error details:', JSON.stringify(error, null, 2));
+      safeLogger.error('teams.member_add_failed');
       if (error.code === '23505') {
         return res.status(400).json({ error: 'User is already a member of this team' });
       }
@@ -384,8 +382,7 @@ router.post('/:id/members', authenticateToken, requireRole(['admin']), validateU
         return res.status(400).json({ error: 'Invalid user ID or team ID' });
       }
       return res.status(500).json({
-        error: 'Failed to add team member',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        error: 'Failed to add team member'
       });
     }
 
@@ -400,7 +397,7 @@ router.post('/:id/members', authenticateToken, requireRole(['admin']), validateU
       .eq('organization_id', user.organization_id);
 
     if (personnelUpdateError) {
-      console.error('Failed to update personnel team assignment:', personnelUpdateError);
+      safeLogger.error('teams.member_personnel_update_failed');
     }
 
     res.status(201).json({
@@ -409,7 +406,7 @@ router.post('/:id/members', authenticateToken, requireRole(['admin']), validateU
     });
 
   } catch (error) {
-    console.error('Add team member error:', error);
+    safeLogger.error('teams.member_add_failed');
     res.status(500).json({ error: 'Failed to add team member' });
   }
 });
@@ -450,7 +447,7 @@ router.delete('/:id/members/:memberId', authenticateToken, requireRole(['admin']
       .eq('team_id', id);
 
     if (error) {
-      console.error('Remove team member error:', error);
+      safeLogger.error('teams.member_remove_failed');
       return res.status(500).json({ error: 'Failed to remove team member' });
     }
 
@@ -469,7 +466,7 @@ router.delete('/:id/members/:memberId', authenticateToken, requireRole(['admin']
     res.json({ message: 'Team member removed successfully' });
 
   } catch (error) {
-    console.error('Remove team member error:', error);
+    safeLogger.error('teams.member_remove_failed');
     res.status(500).json({ error: 'Failed to remove team member' });
   }
 });
@@ -520,7 +517,7 @@ router.get('/:id', authenticateToken, requireRole(['admin', 'responder', 'super_
     });
 
   } catch (error) {
-    console.error('Get team error:', error);
+    safeLogger.error('teams.get_failed');
     res.status(500).json({ error: 'Failed to fetch team' });
   }
 });

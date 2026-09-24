@@ -15,6 +15,7 @@ const {
   REFRESH_RATE_LIMIT
 } = require('../middleware/authenticatedRateLimit');
 const { signAccessToken } = require('../utils/jwt');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -114,7 +115,7 @@ router.post('/register', validateRegister, async (req, res) => {
       });
 
     if (insertError) {
-      console.error('User insert error:', insertError);
+      safeLogger.error('auth.registration_insert_failed');
       return res.status(500).json({ error: 'Registration failed' });
     }
 
@@ -148,7 +149,7 @@ router.post('/register', validateRegister, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Registration error:', error);
+    safeLogger.error('auth.registration_failed');
     res.status(500).json({ error: 'Registration failed' });
   }
 });
@@ -200,7 +201,7 @@ router.post('/login', validateLogin, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Login error:', error);
+    safeLogger.error('auth.login_failed');
     res.status(500).json({ error: 'Login failed' });
   }
 });
@@ -219,7 +220,7 @@ router.post('/refresh', authenticateToken, authenticatedRateLimiter(REFRESH_RATE
     });
 
   } catch (error) {
-    console.error('Token refresh error:', error);
+    safeLogger.error('auth.refresh_failed');
     res.status(500).json({ error: 'Token refresh failed' });
   }
 });
@@ -240,14 +241,14 @@ router.post('/change-password', authenticateToken, authenticatedRateLimiter(CHAN
       .eq("id", req.user.id);
 
     if (error) {
-      console.error("Password change error:", error);
+      safeLogger.error('auth.password_change_failed');
       return res.status(500).json({ error: "Failed to change password" });
     }
 
     res.json({ message: "Password changed successfully" });
 
   } catch (error) {
-    console.error("Change password error:", error);
+    safeLogger.error('auth.password_change_failed');
     res.status(500).json({ error: "Failed to change password" });
   }
 });
