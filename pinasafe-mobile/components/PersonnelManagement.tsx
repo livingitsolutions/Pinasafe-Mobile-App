@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import personnelService, { Personnel, CreatePersonnelData } from '../services/personnelService';
+import personnelService, { Personnel, CreatePersonnelInvitationData } from '../services/personnelService';
 
 export default function PersonnelManagement() {
   const [personnel, setPersonnel] = useState<Personnel[]>([]);
@@ -46,31 +46,26 @@ export default function PersonnelManagement() {
   };
 
   const handleCreate = async () => {
-    if (!formData.name || !formData.contactNumber) {
+    if (!formData.name || !formData.contactNumber || !formData.email) {
       Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
 
     try {
       setLoading(true);
-      const data: CreatePersonnelData = {
+      const data: CreatePersonnelInvitationData = {
         name: formData.name,
         contactNumber: formData.contactNumber,
-        email: formData.email || undefined,
-        address: formData.address || undefined,
-        barangay: formData.barangay || undefined,
-        city: formData.city || undefined,
-        province: formData.province || undefined,
+        email: formData.email,
         personnelRole: formData.personnelRole,
       };
 
-      await personnelService.createPersonnel(data);
-      Alert.alert('Success', 'Personnel added successfully');
+      await personnelService.invitePersonnel(data);
+      Alert.alert('Success', 'Personnel invitation created successfully');
       setModalVisible(false);
       resetForm();
-      loadPersonnel();
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.error || 'Failed to add personnel');
+      Alert.alert('Error', error.response?.data?.error || 'Failed to create personnel invitation');
     } finally {
       setLoading(false);
     }
@@ -354,7 +349,9 @@ export default function PersonnelManagement() {
               </View>
 
               <View className="mb-4">
-                <Text className="text-sm font-semibold mb-2 text-gray-700">Email</Text>
+                <Text className="text-sm font-semibold mb-2 text-gray-700">
+                  Email {selectedPersonnel ? '' : '*'}
+                </Text>
                 <TextInput
                   value={formData.email}
                   onChangeText={(text) => setFormData({ ...formData, email: text })}
@@ -364,7 +361,7 @@ export default function PersonnelManagement() {
                 />
               </View>
 
-              <View className="mb-4">
+              {selectedPersonnel && <View className="mb-4">
                 <Text className="text-sm font-semibold mb-2 text-gray-700">Street Address</Text>
                 <TextInput
                   value={formData.address}
@@ -372,9 +369,9 @@ export default function PersonnelManagement() {
                   placeholder="Enter street address"
                   className="border border-gray-300 rounded-lg px-4 py-3"
                 />
-              </View>
+              </View>}
 
-              <View className="mb-4">
+              {selectedPersonnel && <View className="mb-4">
                 <Text className="text-sm font-semibold mb-2 text-gray-700">Barangay</Text>
                 <TextInput
                   value={formData.barangay}
@@ -382,9 +379,9 @@ export default function PersonnelManagement() {
                   placeholder="Enter barangay"
                   className="border border-gray-300 rounded-lg px-4 py-3"
                 />
-              </View>
+              </View>}
 
-              <View className="mb-4">
+              {selectedPersonnel && <View className="mb-4">
                 <Text className="text-sm font-semibold mb-2 text-gray-700">City/Municipality</Text>
                 <TextInput
                   value={formData.city}
@@ -392,9 +389,9 @@ export default function PersonnelManagement() {
                   placeholder="Enter city/municipality"
                   className="border border-gray-300 rounded-lg px-4 py-3"
                 />
-              </View>
+              </View>}
 
-              <View className="mb-4">
+              {selectedPersonnel && <View className="mb-4">
                 <Text className="text-sm font-semibold mb-2 text-gray-700">Province</Text>
                 <TextInput
                   value={formData.province}
@@ -402,7 +399,7 @@ export default function PersonnelManagement() {
                   placeholder="Enter province"
                   className="border border-gray-300 rounded-lg px-4 py-3"
                 />
-              </View>
+              </View>}
 
               <View className="mb-4">
                 <Text className="text-sm font-semibold mb-2 text-gray-700">Role *</Text>
@@ -462,7 +459,7 @@ export default function PersonnelManagement() {
                   <ActivityIndicator color="white" />
                 ) : (
                   <Text className="text-white font-semibold">
-                    {selectedPersonnel ? 'Update' : 'Create'}
+                    {selectedPersonnel ? 'Update' : 'Create Invitation'}
                   </Text>
                 )}
               </TouchableOpacity>
