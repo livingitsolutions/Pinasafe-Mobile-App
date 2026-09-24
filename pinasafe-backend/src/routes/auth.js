@@ -10,6 +10,11 @@ const {
   validatePersonnelInvitationAcceptance
 } = require('../middleware/validation');
 const { authenticateToken } = require('../middleware/auth');
+const {
+  authenticatedRateLimiter,
+  CHANGE_PASSWORD_RATE_LIMIT,
+  REFRESH_RATE_LIMIT
+} = require('../middleware/authenticatedRateLimit');
 
 const router = express.Router();
 
@@ -204,7 +209,7 @@ router.post('/login', validateLogin, async (req, res) => {
   }
 });
 
-router.post('/refresh', authenticateToken, async (req, res) => {
+router.post('/refresh', authenticateToken, authenticatedRateLimiter(REFRESH_RATE_LIMIT), async (req, res) => {
   try {
     const { user } = req;
 
@@ -225,7 +230,7 @@ router.post('/refresh', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/change-password', authenticateToken, async (req, res) => {
+router.post('/change-password', authenticateToken, authenticatedRateLimiter(CHANGE_PASSWORD_RATE_LIMIT), async (req, res) => {
   try {
     const { newPassword } = req.body;
     const supabase = getClient();

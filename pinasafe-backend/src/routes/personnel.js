@@ -4,6 +4,10 @@ const crypto = require('crypto');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateUUID, validatePersonnelInvitation } = require('../middleware/validation');
+const {
+  authenticatedRateLimiter,
+  PERSONNEL_INVITATION_RATE_LIMIT
+} = require('../middleware/authenticatedRateLimit');
 
 const router = express.Router();
 
@@ -47,6 +51,7 @@ router.post(
   '/invitations',
   authenticateToken,
   requireRole(['admin']),
+  authenticatedRateLimiter(PERSONNEL_INVITATION_RATE_LIMIT),
   validatePersonnelInvitation,
   async (req, res) => {
     try {
