@@ -1,6 +1,5 @@
 require('dotenv').config(); 
 const express = require('express');
-const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
@@ -8,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 
 
 const { connectDatabase, validateConfiguration } = require('./config/database');
+const { createCorsMiddleware, parseCorsOrigins } = require('./config/cors');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const emergencyRoutes = require('./routes/emergency');
@@ -22,13 +22,11 @@ const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGIN);
 
 // Security middleware
 app.use(helmet());
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true
-}));
+app.use(createCorsMiddleware(corsOrigins));
 
 // Rate limiting
 // const limiter = rateLimit({

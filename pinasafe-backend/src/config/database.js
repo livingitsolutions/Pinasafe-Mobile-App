@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const { parseCorsOrigins } = require('./cors');
 
 let supabase;
 
@@ -16,6 +17,8 @@ const validateConfiguration = () => {
       throw new Error(`Missing required backend configuration: ${name}`);
     }
   }
+
+  parseCorsOrigins(process.env.CORS_ORIGIN);
 
   if (
     process.env.JWT_SECRET === JWT_SECRET_PLACEHOLDER
@@ -69,6 +72,7 @@ async function executeInsert(query, params = []) {
 module.exports = {
   connectDatabase,
   getClient,
+  parseCorsOrigins,
   validateConfiguration,
   executeQuery,
   executeQuerySingle,
