@@ -1,16 +1,18 @@
-const jwt = require('jsonwebtoken');
 const { getClient } = require('../config/database');
+const {
+  extractBearerToken,
+  verifyAccessToken
+} = require('../utils/jwt');
 
 const authenticateToken = async (req, res, next) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = extractBearerToken(req.headers.authorization);
 
     if (!token) {
       return res.status(401).json({ error: 'Access token required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyAccessToken(token);
     const supabase = getClient();
 
     const { data: user, error } = await supabase
@@ -84,11 +86,10 @@ const canAccessOrganization = (user, organizationId) => {
 
 const optionalAuth = async (req, res, next) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = extractBearerToken(req.headers.authorization);
 
     if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = verifyAccessToken(token);
       const supabase = getClient();
 
       const { data: user } = await supabase

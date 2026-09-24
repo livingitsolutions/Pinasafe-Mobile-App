@@ -1,7 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
 const {
@@ -15,6 +14,7 @@ const {
   CHANGE_PASSWORD_RATE_LIMIT,
   REFRESH_RATE_LIMIT
 } = require('../middleware/authenticatedRateLimit');
+const { signAccessToken } = require('../utils/jwt');
 
 const router = express.Router();
 
@@ -131,10 +131,8 @@ router.post('/register', validateRegister, async (req, res) => {
         created_by: userId
       });
 
-    const token = jwt.sign(
+    const token = signAccessToken(
       { userId, email: email.toLowerCase(), role: 'citizen' },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     const { data: user } = await supabase
@@ -188,10 +186,8 @@ router.post('/login', validateLogin, async (req, res) => {
       }
     }
 
-    const token = jwt.sign(
+    const token = signAccessToken(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     delete user.password_hash;
@@ -213,10 +209,8 @@ router.post('/refresh', authenticateToken, authenticatedRateLimiter(REFRESH_RATE
   try {
     const { user } = req;
 
-    const token = jwt.sign(
+    const token = signAccessToken(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     res.json({
