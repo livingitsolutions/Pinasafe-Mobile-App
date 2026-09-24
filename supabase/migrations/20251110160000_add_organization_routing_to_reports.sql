@@ -120,6 +120,7 @@ END $$;
 
 -- Update RLS policies to use organization_id directly
 DROP POLICY IF EXISTS "Organization members can read relevant reports" ON emergency_reports;
+DROP POLICY IF EXISTS "Organization members can read their assigned reports" ON emergency_reports;
 
 CREATE POLICY "Organization members can read their assigned reports"
   ON emergency_reports FOR SELECT
@@ -135,6 +136,8 @@ CREATE POLICY "Organization members can read their assigned reports"
 
 -- Add policy for responders/admins to update reports in their organization
 DROP POLICY IF EXISTS "Responders and admins can update reports" ON emergency_reports;
+
+DROP POLICY IF EXISTS "Organization responders can update their reports" ON emergency_reports;
 
 CREATE POLICY "Organization responders can update their reports"
   ON emergency_reports FOR UPDATE
@@ -157,6 +160,8 @@ CREATE POLICY "Organization responders can update their reports"
   );
 
 -- Super-admins can still update all reports
+DROP POLICY IF EXISTS "Super-admins can update all reports" ON emergency_reports;
+
 CREATE POLICY "Super-admins can update all reports"
   ON emergency_reports FOR UPDATE
   TO authenticated
