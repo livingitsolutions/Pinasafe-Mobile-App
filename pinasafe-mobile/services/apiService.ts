@@ -81,15 +81,20 @@ class APIService {
       console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`);
 
       const response = await fetch(url, config);
-      const data = await response.json();
+      const responseText = await response.text();
+      let data: any;
+      try {
+        data = responseText ? JSON.parse(responseText) : undefined;
+      } catch {
+        data = undefined;
+      }
 
       if (!response.ok) {
-        console.error(`❌ API Error: ${response.status}`, data);
-        return { error: data.message || `HTTP ${response.status}` };
+        console.error(`❌ API Error: ${response.status}`);
+        return { error: data?.message || `HTTP ${response.status}` };
       }
 
       console.log(`✅ API Success: ${options.method || 'GET'} ${endpoint}`);
-      console.log('Response Data:', data);
       return { data };
     } catch (error) {
       console.error('❌ Network Error:', error);
@@ -155,7 +160,15 @@ class APIService {
   }
 
   async logout(): Promise<void> {
-    await this.request('/auth/logout', { method: 'POST' });
+    const response = await this.request('/auth/logout', { method: 'POST' });
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    this.token = null;
+    await AsyncStorage.removeItem('auth_token');
+  }
+
+  async clearLocalSession(): Promise<void> {
     this.token = null;
     await AsyncStorage.removeItem('auth_token');
   }

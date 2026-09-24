@@ -1069,6 +1069,18 @@ export function EmergencyProvider({ children }: { children: React.ReactNode }) {
 
   const isResponder = user && (user.role === 'responder' || user.role === 'admin');
 
+  // Authenticated incident data must never survive a session boundary.
+  useEffect(() => {
+    if (!user || !authToken) {
+      setReports(currentReports => {
+        currentReports.forEach(report => reactNativeAudioAlertService.stopContinuousAlertForReport(report.id));
+        return [];
+      });
+      setClusteredIncidents([]);
+      setAlerts([]);
+    }
+  }, [user, authToken]);
+
   // ✅ Load reports for ALL roles
   const loadReports = useCallback(async () => {
     try {
