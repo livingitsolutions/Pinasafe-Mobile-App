@@ -100,7 +100,7 @@ router.post('/', authenticateToken, requireRole(['responder', 'admin']), validat
   }
 });
 
-router.put('/:id/dismiss', authenticateToken, validateUUID('id'), async (req, res) => {
+router.put('/:id/dismiss', authenticateToken, requireRole(['responder', 'admin']), validateUUID('id'), async (req, res) => {
   try {
     const { id } = req.params;
     const supabase = getClient();

@@ -6,27 +6,36 @@ const router = express.Router();
 
 router.get('/emergency', authenticateToken, requireRole(['responder', 'admin']), async (req, res) => {
   try {
+    const { user } = req;
     const supabase = getClient();
+
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
 
     const { count: totalReports } = await supabase
       .from('emergency_reports')
-      .select('*', { count: 'exact', head: true });
+      .select('*', { count: 'exact', head: true })
+      .eq('organization_id', user.organization_id);
 
     const { count: activeIncidents } = await supabase
       .from('emergency_reports')
       .select('*', { count: 'exact', head: true })
+      .eq('organization_id', user.organization_id)
       .in('status', ['pending', 'dispatched', 'responding']);
 
     const today = new Date().toISOString().split('T')[0];
     const { count: resolvedToday } = await supabase
       .from('emergency_reports')
       .select('*', { count: 'exact', head: true })
+      .eq('organization_id', user.organization_id)
       .eq('status', 'resolved')
       .gte('resolved_at', today);
 
     const { data: responseTimeData } = await supabase
       .from('emergency_reports')
       .select('created_at, resolved_at')
+      .eq('organization_id', user.organization_id)
       .eq('status', 'resolved')
       .not('resolved_at', 'is', null)
       .limit(100);
@@ -103,53 +112,8 @@ router.get('/user', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/system', authenticateToken, requireRole(['admin']), async (req, res) => {
-  try {
-    const supabase = getClient();
-
-    const { data: userStats } = await supabase
-      .from('users')
-      .select('role');
-
-    const roleCount = userStats.reduce((acc, user) => {
-      acc[user.role] = (acc[user.role] || 0) + 1;
-      return acc;
-    }, {});
-
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-    const { count: recentReports } = await supabase
-      .from('emergency_reports')
-      .select('*', { count: 'exact', head: true })
-      .gte('created_at', twentyFourHoursAgo);
-
-    const { count: recentAlerts } = await supabase
-      .from('system_alerts')
-      .select('*', { count: 'exact', head: true })
-      .gte('created_at', twentyFourHoursAgo);
-
-    const { count: organizations } = await supabase
-      .from('organizations')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_active', true);
-
-    res.json({
-      data: {
-        userStats: roleCount,
-        recentActivity: {
-          reports: recentReports || 0,
-          alerts: recentAlerts || 0
-        },
-        organizations: organizations || 0,
-        systemStatus: 'healthy',
-        uptime: process.uptime()
-      }
-    });
-
-  } catch (error) {
-    console.error('Get system stats error:', error);
-    res.status(500).json({ error: 'Failed to fetch system statistics' });
-  }
+router.get('/system', authenticateToken, async (req, res) => {
+  res.status(403).json({ error: 'System statistics are not available for the current authorization model.' });
 });
 
 module.exports = router;

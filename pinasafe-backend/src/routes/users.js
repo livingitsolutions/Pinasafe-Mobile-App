@@ -54,13 +54,19 @@ router.put('/profile', authenticateToken, async (req, res) => {
 // Get all users (admin only)
 router.get('/', authenticateToken, requireRole(['admin']), validatePagination, async (req, res) => {
   try {
+    const { user } = req;
     const { page = 1, limit = 20, role, verified } = req.query;
     const offset = (page - 1) * limit;
     const supabase = getClient();
 
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
+
     let query = supabase
       .from('users')
-      .select('id, email, name, role, phone, address, verified, created_at')
+      .select('id, email, name, role, phone, address, verified, created_at, organization_id')
+      .eq('organization_id', user.organization_id)
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
 
@@ -99,21 +105,40 @@ router.put('/:id/role', authenticateToken, requireRole(['admin']), async (req, r
   try {
     const { id } = req.params;
     const { role } = req.body;
+    const { user } = req;
     const supabase = getClient();
+
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
 
     const validRoles = ['citizen', 'responder', 'admin'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
 
-    const { data: user, error } = await supabase
+    const { data: targetUser, error: targetUserError } = await supabase
+      .from('users')
+      .select('id, organization_id, role')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (targetUserError || !targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (targetUser.organization_id !== user.organization_id) {
+      return res.status(403).json({ error: 'Access denied for this organization' });
+    }
+
+    const { data: updatedUser, error } = await supabase
       .from('users')
       .update({ role, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .maybeSingle();
 
-    if (!user) {
+    if (!updatedUser) {
       return res.status(404).json({ error: 'User not found' });
     }
 

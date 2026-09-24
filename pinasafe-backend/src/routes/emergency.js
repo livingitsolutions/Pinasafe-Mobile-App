@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateEmergencyReport, validateUUID, validatePagination } = require('../middleware/validation');
 const clusteringService = require('../services/incidentClusteringService');
 
@@ -199,11 +199,30 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
   try {
     const { id } = req.params;
     const { status, notes } = req.body;
+    const { user } = req;
     const supabase = getClient();
 
     const validStatuses = ['pending', 'dispatched', 'responding', 'resolved'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const { data: existingReport, error: fetchError } = await supabase
+      .from('emergency_reports')
+      .select('id, organization_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchError || !existingReport) {
+      return res.status(404).json({ error: 'Emergency report not found' });
+    }
+
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
+
+    if (!canAccessOrganization(user, existingReport.organization_id)) {
+      return res.status(403).json({ error: 'Access denied for this organization' });
     }
 
     const updateData = {
@@ -221,6 +240,7 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
       .from('emergency_reports')
       .update(updateData)
       .eq('id', id)
+      .eq('organization_id', user.organization_id)
       .select()
       .single();
 
@@ -336,6 +356,16 @@ router.get('/:id', authenticateToken, validateUUID('id'), async (req, res) => {
 
     if (!report) {
       return res.status(404).json({ error: 'Emergency report not found' });
+    }
+
+    if (user.role !== 'citizen') {
+      if (!user.organization_id) {
+        return res.status(400).json({ error: 'User not assigned to an organization' });
+      }
+
+      if (!canAccessOrganization(user, report.organization_id)) {
+        return res.status(403).json({ error: 'Access denied for this organization' });
+      }
     }
 
     const formattedReport = {

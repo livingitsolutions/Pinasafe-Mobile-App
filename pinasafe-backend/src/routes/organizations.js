@@ -1,11 +1,11 @@
 const express = require('express');
 const { getClient } = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get all active organizations
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
   try {
     const supabase = getClient();
 
@@ -29,7 +29,7 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // Get organization readiness with team details
-router.get('/readiness', authenticateToken, async (req, res) => {
+router.get('/readiness', authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
   try {
     const { user } = req;
     const supabase = getClient();
@@ -204,10 +204,18 @@ router.get('/readiness', authenticateToken, async (req, res) => {
 
 
 // Get organization personnel
-router.get('/:id/personnel', authenticateToken, async (req, res) => {
+router.get('/:id/personnel', authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
   try {
     const { id } = req.params;
+    const { user } = req;
     const supabase = getClient();
+
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
+    if (!canAccessOrganization(user, id)) {
+      return res.status(403).json({ error: 'Access denied for this organization' });
+    }
 
     const { data: personnel, error } = await supabase
       .from('personnel')
@@ -228,35 +236,17 @@ router.get('/:id/personnel', authenticateToken, async (req, res) => {
   }
 });
 
-  // Update a personnel record (team assignment, leader flag, etc.)
-  router.put('/personnel/:personnelId', authenticateToken, async (req, res) => {
-    try {
-      const { personnelId } = req.params;
-      const updates = req.body;
-      const supabase = getClient();
-
-      const { data, error } = await supabase
-        .from('personnel')
-        .update(updates)
-        .eq('id', personnelId)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Update personnel error:', error);
-        return res.status(500).json({ error: 'Failed to update personnel' });
-      }
-
-      res.json({ data });
-    } catch (error) {
-      console.error('Update personnel error:', error);
-      res.status(500).json({ error: 'Failed to update personnel' });
-    }
-  });
-
-  router.get("/organization/:id/alerts", authenticateToken, async (req, res) => {
-  const supabase = getClient();
+  router.get("/organization/:id/alerts", authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
+  const { user } = req;
   const { id } = req.params;
+  const supabase = getClient();
+
+  if (!user.organization_id) {
+    return res.status(400).json({ error: 'User not assigned to an organization' });
+  }
+  if (!canAccessOrganization(user, id)) {
+    return res.status(403).json({ error: 'Access denied for this organization' });
+  }
 
   const { data, error } = await supabase
     .from("organization_alerts")

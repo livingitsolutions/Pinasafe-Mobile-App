@@ -2,7 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const { getClient } = require('../config/database');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateUUID, validatePersonnelInvitation } = require('../middleware/validation');
 
 const router = express.Router();
@@ -453,7 +453,10 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
     const { user } = req;
     const supabase = getClient();
 
-    // First, get the personnel record
+    if (userId !== user.id && user.role === 'citizen') {
+      return res.status(403).json({ error: 'Access denied to another user personnel record' });
+    }
+
     const { data: personnel, error: personnelError } = await supabase
       .from('personnel')
       .select('*')
@@ -469,7 +472,18 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Personnel not found' });
     }
 
-    // Then, get team membership if exists
+    if (userId !== user.id) {
+      if (user.role !== 'admin' && user.role !== 'responder') {
+        return res.status(403).json({ error: 'Access denied to another user personnel record' });
+      }
+      if (!user.organization_id) {
+        return res.status(400).json({ error: 'User not assigned to an organization' });
+      }
+      if (!canAccessOrganization(user, personnel.organization_id)) {
+        return res.status(403).json({ error: 'Access denied for this organization' });
+      }
+    }
+
     const { data: teamMembers, error: teamError } = await supabase
       .from('team_members')
       .select(`

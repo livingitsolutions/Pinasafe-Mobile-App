@@ -70,6 +70,18 @@ const requireRole = (roles) => {
   };
 };
 
+const canAccessOrganization = (user, organizationId) => {
+  if (!user || !organizationId) {
+    return false;
+  }
+
+  if (user.role !== 'admin' && user.role !== 'responder') {
+    return false;
+  }
+
+  return user.organization_id === organizationId;
+};
+
 const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -97,5 +109,6 @@ const optionalAuth = async (req, res, next) => {
 module.exports = {
   authenticateToken,
   requireRole,
-  optionalAuth
+  optionalAuth,
+  canAccessOrganization
 };
