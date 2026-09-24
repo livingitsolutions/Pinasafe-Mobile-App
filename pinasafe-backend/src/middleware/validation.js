@@ -100,6 +100,56 @@ const validateAlert = [
   handleValidationErrors
 ];
 
+
+// Personnel invitation validation
+const validatePersonnelInvitation = [
+  body('email')
+    .trim()
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Valid email is required'),
+  body('name')
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Name must be between 2 and 100 characters'),
+  body('contactNumber')
+    .trim()
+    .matches(/^(\+63|0)?[-\s]?\d{3}[-\s]?\d{3}[-\s]?\d{4}$/)
+    .withMessage('Valid contact number required'),
+  body('personnelRole')
+    .isIn(['staff', 'rescue_member'])
+    .withMessage('Personnel role must be staff or rescue_member'),
+  body('specializations')
+    .optional()
+    .isArray({ max: 20 })
+    .withMessage('Specializations must be an array'),
+  body('specializations.*')
+    .optional()
+    .isString()
+    .withMessage('Each specialization must be a string')
+    .bail()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Each specialization must be between 1 and 100 characters'),
+  body('userRole')
+    .not()
+    .exists()
+    .withMessage('userRole is not accepted'),
+  body('organizationId')
+    .not()
+    .exists()
+    .withMessage('organizationId is not accepted'),
+  body('organization_id')
+    .not()
+    .exists()
+    .withMessage('organization_id is not accepted'),
+  body('password')
+    .not()
+    .exists()
+    .withMessage('password is not accepted'),
+  handleValidationErrors
+];
+
 // Parameter validation
 const validateUUID = (paramName) => [
   param(paramName)
@@ -125,6 +175,7 @@ module.exports = {
   validateLogin,
   validateEmergencyReport,
   validateAlert,
+  validatePersonnelInvitation,
   validateUUID,
   validatePagination,
   handleValidationErrors

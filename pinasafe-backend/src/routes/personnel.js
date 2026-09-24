@@ -1,9 +1,9 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
-const { validateUUID } = require('../middleware/validation');
+const { validateUUID, validatePersonnelInvitation } = require('../middleware/validation');
 
 const router = express.Router();
 
@@ -43,6 +43,117 @@ router.get('/', authenticateToken, requireRole(['admin', 'super_admin']), async 
   }
 });
 
+router.post(
+  '/invitations',
+  authenticateToken,
+  requireRole(['admin']),
+  validatePersonnelInvitation,
+  async (req, res) => {
+    try {
+      const { user } = req;
+
+      if (!user.organization_id) {
+        return res.status(400).json({ error: 'User not assigned to an organization' });
+      }
+
+      const email = req.body.email.trim().toLowerCase();
+      const name = req.body.name.trim();
+      const contactNumber = req.body.contactNumber.trim();
+      const personnelRole = req.body.personnelRole;
+      const specializations = Array.isArray(req.body.specializations)
+        ? req.body.specializations.map((item) => item.trim())
+        : [];
+
+      // Personnel invitations from this workflow always create responder accounts.
+      const userRole = 'responder';
+      const supabase = getClient();
+
+      const { data: existingUsers, error: existingUserError } = await supabase
+        .from('users')
+        .select('id')
+        .ilike('email', email)
+        .limit(1);
+
+      if (existingUserError) {
+        return res.status(500).json({ error: 'Failed to verify invitation eligibility' });
+      }
+
+      if (existingUsers && existingUsers.length > 0) {
+        return res.status(409).json({ error: 'Email already registered' });
+      }
+
+      const rawToken = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = crypto
+        .createHash('sha256')
+        .update(rawToken)
+        .digest('hex');
+
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const updatedAt = new Date().toISOString();
+
+      // Reissuing replaces any still-pending invitation, including one that
+      // has expired without having its status changed.
+      const { error: revokeError } = await supabase
+        .from('personnel_invites')
+        .update({
+          status: 'revoked',
+          consumed_at: null,
+          updated_at: updatedAt
+        })
+        .eq('organization_id', user.organization_id)
+        .eq('email', email)
+        .eq('status', 'pending');
+
+      if (revokeError) {
+        return res.status(500).json({ error: 'Failed to prepare personnel invitation' });
+      }
+
+      const { data: invitation, error: insertError } = await supabase
+        .from('personnel_invites')
+        .insert({
+          organization_id: user.organization_id,
+          email,
+          user_role: userRole,
+          personnel_role: personnelRole,
+          name,
+          contact_number: contactNumber,
+          specializations,
+          token_hash: tokenHash,
+          status: 'pending',
+          expires_at: expiresAt,
+          invited_by: user.id
+        })
+        .select('id, email, name, personnel_role, user_role, expires_at')
+        .single();
+
+      if (insertError) {
+        if (insertError.code === '23505') {
+          return res.status(409).json({
+            error: 'An active invitation already exists. Please retry.'
+          });
+        }
+
+        return res.status(500).json({ error: 'Failed to create personnel invitation' });
+      }
+
+      return res.status(201).json({
+        message: 'Personnel invitation created successfully',
+        data: {
+          id: invitation.id,
+          email: invitation.email,
+          name: invitation.name,
+          personnelRole: invitation.personnel_role,
+          userRole: invitation.user_role,
+          expiresAt: invitation.expires_at,
+          invitationToken: rawToken
+        }
+      });
+    } catch (error) {
+      return res.status(500).json({ error: 'Server error creating personnel invitation' });
+    }
+  }
+);
+
 router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => {
   try {
     const {
@@ -50,10 +161,6 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       name,
       contactNumber,
       email,
-      address,
-      barangay,
-      city,
-      province,
       specializations,
       personnelRole
     } = req.body;
@@ -64,105 +171,66 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       return res.status(400).json({ error: 'User not assigned to an organization' });
     }
 
-    if (!['staff', 'rescue_member'].includes(personnelRole)) {
-      return res.status(400).json({ error: 'Invalid personnel role. Must be staff or rescue_member' });
+    if (!userId) {
+      return res.status(400).json({
+        error: 'New personnel accounts must be created through the invitation workflow'
+      });
     }
 
-    const personnelId = uuidv4();
+    if (!['staff', 'rescue_member'].includes(personnelRole)) {
+      return res.status(400).json({
+        error: 'Invalid personnel role. Must be staff or rescue_member'
+      });
+    }
+
     const supabase = getClient();
-    let finalUserId = userId;
 
-    if (userId) {
-      const { data: existingUser, error: userError } = await supabase
-        .from('users')
-        .select('id, organization_id')
-        .eq('id', userId)
-        .maybeSingle();
+    const { data: existingUser, error: userError } = await supabase
+      .from('users')
+      .select('id, organization_id')
+      .eq('id', userId)
+      .maybeSingle();
 
-      if (userError || !existingUser) {
-        return res.status(404).json({ error: 'User not found' });
-      }
+    if (userError || !existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-      if (existingUser.organization_id && existingUser.organization_id !== user.organization_id) {
-        return res.status(400).json({ error: 'User already assigned to another organization' });
-      }
+    if (
+      existingUser.organization_id &&
+      existingUser.organization_id !== user.organization_id
+    ) {
+      return res.status(400).json({
+        error: 'User already assigned to another organization'
+      });
+    }
 
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          organization_id: user.organization_id,
-          role: personnelRole === 'rescue_member' ? 'responder' : 'responder'
-        })
-        .eq('id', userId);
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({
+        organization_id: user.organization_id,
+        role: 'responder'
+      })
+      .eq('id', userId);
 
-      if (updateError) {
-        console.error('Update user organization error:', updateError);
-        return res.status(500).json({ error: 'Failed to assign user to organization' });
-      }
-    } else if (email) {
-      // Check if email already exists
-      const { data: existingEmail, error: emailCheckError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .maybeSingle();
-
-      if (emailCheckError) {
-        console.error('Email check error:', emailCheckError);
-        return res.status(500).json({ error: 'Failed to check email availability' });
-      }
-
-      if (existingEmail) {
-        return res.status(400).json({ error: 'Email already in use' });
-      }
-
-      // Hash the default password
-      const defaultPassword = 'Password123';
-      const passwordHash = await bcrypt.hash(defaultPassword, 10);
-      const userRole = 'responder';
-      const newUserId = uuidv4();
-
-      // Create user in public.users table
-      const { error: insertUserError } = await supabase
-        .from('users')
-        .insert({
-          id: newUserId,
-          email: email,
-          password_hash: passwordHash,
-          name: name,
-          phone: contactNumber || '',
-          address: address || null,
-          barangay: barangay || null,
-          city: city || null,
-          province: province || null,
-          role: userRole,
-          organization_id: user.organization_id,
-          must_change_password: true,
-          verified: true
-        });
-
-      if (insertUserError) {
-        console.error('Insert user into users table error:', insertUserError);
-        return res.status(500).json({ error: 'Failed to create user record', details: insertUserError.message });
-      }
-
-      finalUserId = newUserId;
+    if (updateError) {
+      return res.status(500).json({
+        error: 'Failed to assign user to organization'
+      });
     }
 
     const insertData = {
-      id: personnelId,
+      id: uuidv4(),
       organization_id: user.organization_id,
+      user_id: userId,
       name,
       contact_number: contactNumber,
       personnel_role: personnelRole
     };
 
-    if (finalUserId) {
-      insertData.user_id = finalUserId;
-    }
     if (email) {
       insertData.email = email;
     }
+
     if (specializations && specializations.length > 0) {
       insertData.specializations = specializations;
     }
@@ -178,29 +246,15 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       .single();
 
     if (error) {
-      console.error('Create personnel error details:', {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code
-      });
-      return res.status(500).json({
-        error: 'Failed to create personnel',
-        details: error.message
-      });
+      return res.status(500).json({ error: 'Failed to create personnel' });
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'Personnel added successfully',
       data: personnel
     });
-
   } catch (error) {
-    console.error('Create personnel error:', error);
-    res.status(500).json({
-      error: 'Server error creating personnel',
-      details: error.message
-    });
+    return res.status(500).json({ error: 'Server error creating personnel' });
   }
 });
 
