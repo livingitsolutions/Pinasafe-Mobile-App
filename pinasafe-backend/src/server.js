@@ -87,6 +87,8 @@ app.use('*', (req, res) => {
 app.use(errorHandler);
 
 // Start server
+let server;
+
 async function startServer() {
   try {
     validateConfiguration();
@@ -96,27 +98,35 @@ async function startServer() {
     console.log('✅ Database connected successfully');
 
     // Start listening
-    app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(`🚀 PinaSafe Backend API running on port ${PORT}`);
       console.log(`📍 Environment: ${process.env.NODE_ENV}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/health`);
     });
+
+    return server;
   } catch (error) {
     safeLogger.error('server.start_failed');
     process.exit(1);
   }
 }
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
+// Stop accepting new connections before terminating the process.
+function shutdown() {
+  safeLogger.info('server.shutdown');
 
-process.on('SIGINT', () => {
-  console.log('🛑 SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
+  if (!server) {
+    process.exit(0);
+    return;
+  }
+
+  server.close(() => {
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 if (require.main === module) {
   startServer();
