@@ -12,7 +12,7 @@ router.get('/', authenticateToken, requireRole(['admin', 'responder']), async (r
 
     const { data: organizations, error } = await supabase
       .from('organizations')
-      .select('*')
+      .select('id, name, type, contact_number, email, coverage_areas, is_active')
       .eq('is_active', true)
       .order('name');
 
