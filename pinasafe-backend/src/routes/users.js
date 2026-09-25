@@ -136,6 +136,7 @@ router.put('/:id/role', authenticateToken, requireRole(['admin']), async (req, r
       .from('users')
       .update({ role, updated_at: new Date().toISOString() })
       .eq('id', id)
+      .eq('organization_id', user.organization_id)
       .select()
       .maybeSingle();
 

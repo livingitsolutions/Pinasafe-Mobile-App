@@ -196,6 +196,7 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
       .from('rescue_teams')
       .update(updateData)
       .eq('id', id)
+      .eq('organization_id', user.organization_id)
       .select(`
         *,
         organization:organizations(id, name, type),

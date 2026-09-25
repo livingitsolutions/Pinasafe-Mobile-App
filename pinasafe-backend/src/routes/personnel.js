@@ -210,13 +210,19 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       });
     }
 
-    const { error: updateError } = await supabase
+    let assignmentQuery = supabase
       .from('users')
       .update({
         organization_id: user.organization_id,
         role: 'responder'
       })
       .eq('id', userId);
+
+    assignmentQuery = existingUser.organization_id
+      ? assignmentQuery.eq('organization_id', user.organization_id)
+      : assignmentQuery.is('organization_id', null);
+
+    const { error: updateError } = await assignmentQuery;
 
     if (updateError) {
       return res.status(500).json({
@@ -331,6 +337,7 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
       .from('personnel')
       .update(updateData)
       .eq('id', id)
+      .eq('organization_id', user.organization_id)
       .select('*')
       .single();
 
@@ -346,7 +353,8 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
       const { error: userUpdateError } = await supabase
         .from('users')
         .update(userUpdateData)
-        .eq('id', existingPersonnel.user_id);
+        .eq('id', existingPersonnel.user_id)
+        .eq('organization_id', user.organization_id);
 
       if (userUpdateError) {
         safeLogger.error('personnel.user_address_update_failed');

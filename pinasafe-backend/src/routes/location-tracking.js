@@ -77,6 +77,10 @@ router.post('/start/:emergencyId', authenticateToken, requireRole(['responder'])
           updated_at: new Date().toISOString()
         })
         .eq('id', existingTracking.id)
+        .eq('team_id', report.assigned_team_id)
+        .eq('user_id', user.id)
+        .eq('emergency_report_id', emergencyId)
+        .eq('is_active', true)
         .select()
         .single();
 
@@ -179,6 +183,10 @@ router.put('/update/:emergencyId', authenticateToken, requireRole(['responder'])
         updated_at: new Date().toISOString()
       })
       .eq('id', tracking.id)
+      .eq('team_id', tracking.team_id)
+      .eq('user_id', user.id)
+      .eq('emergency_report_id', emergencyId)
+      .eq('is_active', true)
       .select()
       .single();
 
@@ -250,6 +258,10 @@ router.post('/stop/:emergencyId', authenticateToken, requireRole(['responder']),
         updated_at: new Date().toISOString()
       })
       .eq('id', tracking.id)
+      .eq('team_id', tracking.team_id)
+      .eq('user_id', user.id)
+      .eq('emergency_report_id', emergencyId)
+      .eq('is_active', true)
       .select()
       .single();
 
