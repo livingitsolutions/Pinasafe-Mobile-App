@@ -5,6 +5,7 @@ const configurationNames = [
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY',
   'JWT_SECRET',
+  'EVIDENCE_STORAGE_BUCKET',
   'CORS_ORIGIN',
   'VITE_SUPABASE_URL',
   'EXPO_PUBLIC_SUPABASE_URL'
@@ -14,6 +15,7 @@ const validConfiguration = {
   SUPABASE_URL: 'https://example.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
   JWT_SECRET: 'a'.repeat(32),
+  EVIDENCE_STORAGE_BUCKET: 'private-evidence',
   CORS_ORIGIN: 'http://localhost:8081'
 };
 
@@ -64,6 +66,13 @@ describe('backend configuration validation', () => {
 
     expect(() => validateConfiguration()).toThrow(/JWT_SECRET/);
   });
+
+  test.each(['', '   ', 'your-private-evidence-bucket', 'bucket name', 'example-bucket'])
+    ('rejects invalid EVIDENCE_STORAGE_BUCKET value %j', (bucket) => {
+      setConfiguration({ EVIDENCE_STORAGE_BUCKET: bucket });
+
+      expect(() => validateConfiguration()).toThrow(/EVIDENCE_STORAGE_BUCKET/);
+    });
 
   test('accepts valid required backend configuration', () => {
     setConfiguration({

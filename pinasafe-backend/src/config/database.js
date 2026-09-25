@@ -5,12 +5,39 @@ const safeLogger = require('../utils/safeLogger');
 let supabase;
 
 const JWT_SECRET_PLACEHOLDER = 'replace-with-a-strong-random-secret';
+const EVIDENCE_STORAGE_BUCKET_PLACEHOLDERS = new Set([
+  'your-private-evidence-bucket',
+  'replace-with-a-real-bucket-name',
+  'example-bucket',
+  'placeholder-bucket',
+  'bucket-name'
+]);
+
+const getEvidenceStorageBucket = () => {
+  const value = process.env.EVIDENCE_STORAGE_BUCKET;
+
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('Missing required backend configuration: EVIDENCE_STORAGE_BUCKET');
+  }
+
+  const bucket = value.trim();
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/.test(bucket)
+    || EVIDENCE_STORAGE_BUCKET_PLACEHOLDERS.has(bucket.toLowerCase())
+    || /^(your|replace|example|placeholder)[._-]/i.test(bucket)
+  ) {
+    throw new Error('Invalid backend configuration: EVIDENCE_STORAGE_BUCKET');
+  }
+
+  return bucket;
+};
 
 const validateConfiguration = () => {
   const requiredConfiguration = [
     ['SUPABASE_URL', process.env.SUPABASE_URL],
     ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY],
-    ['JWT_SECRET', process.env.JWT_SECRET]
+    ['JWT_SECRET', process.env.JWT_SECRET],
+    ['EVIDENCE_STORAGE_BUCKET', process.env.EVIDENCE_STORAGE_BUCKET]
   ];
 
   for (const [name, value] of requiredConfiguration) {
@@ -20,6 +47,7 @@ const validateConfiguration = () => {
   }
 
   parseCorsOrigins(process.env.CORS_ORIGIN);
+  getEvidenceStorageBucket();
 
   if (
     process.env.JWT_SECRET === JWT_SECRET_PLACEHOLDER
@@ -73,6 +101,7 @@ async function executeInsert(query, params = []) {
 module.exports = {
   connectDatabase,
   getClient,
+  getEvidenceStorageBucket,
   parseCorsOrigins,
   validateConfiguration,
   executeQuery,
