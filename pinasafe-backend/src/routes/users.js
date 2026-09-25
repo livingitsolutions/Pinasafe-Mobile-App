@@ -1,7 +1,7 @@
 const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
-const { validatePagination } = require('../middleware/validation');
+const { validatePagination, validateProfileUpdate } = require('../middleware/validation');
 const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
@@ -12,7 +12,7 @@ router.get('/profile', authenticateToken, (req, res) => {
 });
 
 // Update user profile
-router.put('/profile', authenticateToken, async (req, res) => {
+router.put('/profile', authenticateToken, validateProfileUpdate, async (req, res) => {
   try {
     const { name, phone, address } = req.body;
     const userId = req.user.id;

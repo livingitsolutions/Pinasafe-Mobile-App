@@ -3,7 +3,12 @@ const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
-const { validateUUID, validatePersonnelInvitation } = require('../middleware/validation');
+const {
+  validateUUID,
+  validatePersonnelInvitation,
+  validatePersonnelCreate,
+  validatePersonnelUpdate
+} = require('../middleware/validation');
 const {
   authenticatedRateLimiter,
   PERSONNEL_INVITATION_RATE_LIMIT
@@ -160,7 +165,7 @@ router.post(
   }
 );
 
-router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => {
+router.post('/', authenticateToken, requireRole(['admin']), validatePersonnelCreate, async (req, res) => {
   try {
     const {
       userId,
@@ -270,7 +275,7 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
   }
 });
 
-router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id'), async (req, res) => {
+router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id'), validatePersonnelUpdate, async (req, res) => {
   try {
     const { id } = req.params;
 

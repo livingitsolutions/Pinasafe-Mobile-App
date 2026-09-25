@@ -1,21 +1,17 @@
 const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
-const { validateUUID } = require('../middleware/validation');
+const { validateUUID, validateLocationTracking } = require('../middleware/validation');
 const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
-router.post('/start/:emergencyId', authenticateToken, requireRole(['responder']), validateUUID('emergencyId'), async (req, res) => {
+router.post('/start/:emergencyId', authenticateToken, requireRole(['responder']), validateUUID('emergencyId'), validateLocationTracking, async (req, res) => {
   try {
     const { emergencyId } = req.params;
     const { latitude, longitude, accuracy } = req.body;
     const { user } = req;
     const supabase = getClient();
-
-    if (!latitude || !longitude) {
-      return res.status(400).json({ error: 'Latitude and longitude are required' });
-    }
 
     if (!user.organization_id) {
       return res.status(400).json({ error: 'User not assigned to an organization' });
@@ -73,7 +69,7 @@ router.post('/start/:emergencyId', authenticateToken, requireRole(['responder'])
         .update({
           latitude,
           longitude,
-          accuracy: accuracy || null,
+          accuracy: accuracy ?? null,
           updated_at: new Date().toISOString()
         })
         .eq('id', existingTracking.id)
@@ -98,7 +94,7 @@ router.post('/start/:emergencyId', authenticateToken, requireRole(['responder'])
         emergency_report_id: emergencyId,
         latitude,
         longitude,
-        accuracy: accuracy || null,
+        accuracy: accuracy ?? null,
         is_active: true
       })
       .select()
@@ -120,16 +116,12 @@ router.post('/start/:emergencyId', authenticateToken, requireRole(['responder'])
   }
 });
 
-router.put('/update/:emergencyId', authenticateToken, requireRole(['responder']), validateUUID('emergencyId'), async (req, res) => {
+router.put('/update/:emergencyId', authenticateToken, requireRole(['responder']), validateUUID('emergencyId'), validateLocationTracking, async (req, res) => {
   try {
     const { emergencyId } = req.params;
     const { latitude, longitude, speed, heading, accuracy, eta_minutes } = req.body;
     const { user } = req;
     const supabase = getClient();
-
-    if (!latitude || !longitude) {
-      return res.status(400).json({ error: 'Latitude and longitude are required' });
-    }
 
     if (!user.organization_id) {
       return res.status(400).json({ error: 'User not assigned to an organization' });
@@ -176,10 +168,10 @@ router.put('/update/:emergencyId', authenticateToken, requireRole(['responder'])
       .update({
         latitude,
         longitude,
-        speed: speed || 0,
-        heading: heading || null,
-        accuracy: accuracy || null,
-        eta_minutes: eta_minutes || null,
+        speed: speed ?? 0,
+        heading: heading ?? null,
+        accuracy: accuracy ?? null,
+        eta_minutes: eta_minutes ?? null,
         updated_at: new Date().toISOString()
       })
       .eq('id', tracking.id)

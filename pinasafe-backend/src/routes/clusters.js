@@ -1,7 +1,7 @@
 const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
-const { validateUUID } = require('../middleware/validation');
+const { validateUUID, validateClusterUpdate } = require('../middleware/validation');
 const clusteringService = require('../services/incidentClusteringService');
 const safeLogger = require('../utils/safeLogger');
 
@@ -114,7 +114,7 @@ router.get('/:clusterId/updates', authenticateToken, validateUUID('clusterId'), 
   }
 });
 
-router.post('/:clusterId/updates', authenticateToken, requireRole(['responder', 'admin']), validateUUID('clusterId'), async (req, res) => {
+router.post('/:clusterId/updates', authenticateToken, requireRole(['responder', 'admin']), validateUUID('clusterId'), validateClusterUpdate, async (req, res) => {
   try {
     const { clusterId } = req.params;
     const { message, status } = req.body;

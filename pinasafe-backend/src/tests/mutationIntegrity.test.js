@@ -70,7 +70,7 @@ describe('mutation integrity predicates and field allowlists', () => {
   });
 
   test('existing-user personnel assignment constrains a previously unassigned user', async () => {
-    const userQuery = buildQuery({ data: { id: 'user-2', organization_id: null }, error: null });
+    const userQuery = buildQuery({ data: { id: '123e4567-e89b-12d3-a456-426614174004', organization_id: null }, error: null });
     const assignmentQuery = buildQuery({ error: null });
     const personnelQuery = buildQuery({ data: { id: 'person-1' }, error: null });
     getClient.mockReturnValue({
@@ -83,7 +83,7 @@ describe('mutation integrity predicates and field allowlists', () => {
     const response = await request(buildApp('/personnel', personnelRouter))
       .post('/personnel')
       .send({
-        userId: 'user-2',
+        userId: '123e4567-e89b-12d3-a456-426614174004',
         name: 'Responder',
         contactNumber: '09171234567',
         personnelRole: 'rescue_member',

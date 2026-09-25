@@ -2,7 +2,13 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
-const { validateEmergencyReport, validateUUID, validatePagination } = require('../middleware/validation');
+const {
+  validateEmergencyReport,
+  validateEmergencyStatusUpdate,
+  validateTeamAssignment,
+  validateUUID,
+  validatePagination
+} = require('../middleware/validation');
 const clusteringService = require('../services/incidentClusteringService');
 const safeLogger = require('../utils/safeLogger');
 
@@ -148,8 +154,8 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
         title,
         description,
         location,
-        latitude: coordinates?.latitude || null,
-        longitude: coordinates?.longitude || null,
+        latitude: coordinates?.latitude ?? null,
+        longitude: coordinates?.longitude ?? null,
         contact_number: contactNumber || null,
         priority,
         evidence_photos: evidence?.photos || [],
@@ -196,7 +202,7 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
   }
 });
 
-router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), validateUUID('id'), async (req, res) => {
+router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), validateUUID('id'), validateEmergencyStatusUpdate, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes } = req.body;
@@ -229,7 +235,7 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
     const updateData = {
       status,
       responder_id: req.user.id,
-      notes: notes || null,
+      notes: notes ?? null,
       updated_at: new Date().toISOString()
     };
 
@@ -274,7 +280,7 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
 });
 
 // Assign team to emergency report
-router.post('/:id/assign-team', authenticateToken, requireRole(['admin', 'responder']), validateUUID('id'), async (req, res) => {
+router.post('/:id/assign-team', authenticateToken, requireRole(['admin', 'responder']), validateUUID('id'), validateTeamAssignment, async (req, res) => {
   try {
     const { id } = req.params;
     const { teamId } = req.body;

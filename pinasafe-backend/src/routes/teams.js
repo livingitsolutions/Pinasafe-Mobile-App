@@ -2,7 +2,12 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
-const { validateUUID } = require('../middleware/validation');
+const {
+  validateUUID,
+  validateTeamCreate,
+  validateTeamUpdate,
+  validateTeamMember
+} = require('../middleware/validation');
 const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
@@ -60,7 +65,7 @@ router.get('/', authenticateToken, requireRole(['admin', 'responder', 'super_adm
   }
 });
 
-router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => {
+router.post('/', authenticateToken, requireRole(['admin']), validateTeamCreate, async (req, res) => {
   try {
     const {
       name,
@@ -144,7 +149,7 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
   }
 });
 
-router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id'), async (req, res) => {
+router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id'), validateTeamUpdate, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -308,7 +313,7 @@ router.delete('/:id', authenticateToken, requireRole(['admin']), validateUUID('i
   }
 });
 
-router.post('/:id/members', authenticateToken, requireRole(['admin']), validateUUID('id'), async (req, res) => {
+router.post('/:id/members', authenticateToken, requireRole(['admin']), validateUUID('id'), validateTeamMember, async (req, res) => {
   try {
     const { id } = req.params;
     const { userId, position } = req.body;
