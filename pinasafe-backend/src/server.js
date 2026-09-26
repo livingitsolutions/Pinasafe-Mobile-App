@@ -12,6 +12,7 @@ const { createCorsMiddleware, parseCorsOrigins } = require('./config/cors');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const emergencyRoutes = require('./routes/emergency');
+const evidenceRoutes = require('./routes/evidence');
 const organizationRoutes = require('./routes/organizations');
 const alertRoutes = require('./routes/alerts');
 const statsRoutes = require('./routes/stats');
@@ -65,6 +66,7 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/emergency-reports', emergencyRoutes);
+app.use('/api/evidence', evidenceRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/stats', statsRoutes);
