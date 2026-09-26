@@ -33,6 +33,7 @@ jest.mock('../services/aiClassificationService', () => ({
 const { getClient } = require('../config/database');
 const evidenceStorageService = require('../services/evidenceStorageService');
 const { classifyEvidenceImage } = require('../services/aiClassificationService');
+const { getJpegDimensions } = require('../services/jpegDimensionsService');
 const evidenceRouter = require('../routes/evidence');
 
 const sessionId = '123e4567-e89b-12d3-a456-426614174000';
@@ -70,13 +71,37 @@ const buildApp = (user = citizen) => {
   return app;
 };
 
-const validJpeg = (size = 8) => {
-  const buffer = Buffer.alloc(size, 0x11);
-  buffer[0] = 0xff;
-  buffer[1] = 0xd8;
-  buffer[buffer.length - 2] = 0xff;
-  buffer[buffer.length - 1] = 0xd9;
-  return buffer;
+const jpegSegment = (marker, payload = Buffer.alloc(0)) => {
+  const length = payload.length + 2;
+  return Buffer.concat([
+    Buffer.from([0xff, marker, (length >> 8) & 0xff, length & 0xff]),
+    payload
+  ]);
+};
+
+const validJpeg = (size, width = 500, height = 500) => {
+  const sof = jpegSegment(0xc0, Buffer.from([
+    8,
+    (height >> 8) & 0xff,
+    height & 0xff,
+    (width >> 8) & 0xff,
+    width & 0xff,
+    1,
+    1, 0x11, 0
+  ]));
+  const prefix = Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    sof,
+    jpegSegment(0xda, Buffer.from([1, 1, 0, 0, 63, 0]))
+  ]);
+
+  if (!size) return Buffer.concat([prefix, Buffer.from([0x11, 0x22, 0xff, 0xd9])]);
+  if (size < prefix.length + 4) throw new Error('JPEG fixture size is too small');
+  return Buffer.concat([
+    prefix,
+    Buffer.alloc(size - prefix.length - 2, 0x11),
+    Buffer.from([0xff, 0xd9])
+  ]);
 };
 
 const activeSession = () => ({
@@ -227,6 +252,28 @@ describe('strict evidence multipart ingestion boundary', () => {
     const response = await attachImage(buildApp(), { buffer: Buffer.from('not a jpeg') });
 
     expect(response.status).toBe(400);
+  });
+
+  test('rejects invalid dimensions before classifier invocation', async () => {
+    buildSessionQuery({ data: activeSession() });
+    const response = await attachImage(buildApp(), {
+      buffer: validJpeg(undefined, 7000, 6000)
+    });
+
+    expect(response.status).toBe(400);
+    expect(classifyEvidenceImage).not.toHaveBeenCalled();
+  });
+
+  test('invokes classifier only after valid structural dimensions are available', async () => {
+    const imageBuffer = validJpeg();
+    const { from } = buildSessionQuery({ data: activeSession() });
+
+    const response = await attachImage(buildApp(), { buffer: imageBuffer });
+
+    expect(response.status).toBe(200);
+    expect(getJpegDimensions(imageBuffer)).toEqual({ width: 500, height: 500 });
+    expect(classifyEvidenceImage).toHaveBeenCalledWith(imageBuffer);
+    expect(from).toHaveBeenCalledWith('evidence_upload_sessions');
   });
 
   test('rejects empty image files', async () => {

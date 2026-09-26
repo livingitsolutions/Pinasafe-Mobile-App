@@ -6,6 +6,7 @@ const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
 const { classifyEvidenceImage } = require('../services/aiClassificationService');
 const { MAX_EVIDENCE_BYTES } = require('../services/evidenceStorageService');
+const { getJpegDimensions } = require('../services/jpegDimensionsService');
 const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
@@ -134,6 +135,12 @@ const parseMultipartImage = (req, res, next) => {
       || imageBuffer[imageBuffer.length - 1] !== 0xd9
     ) {
       return res.status(400).json({ error: 'Image content is not a valid JPEG signature' });
+    }
+
+    try {
+      getJpegDimensions(imageBuffer);
+    } catch (error) {
+      return res.status(400).json({ error: 'Image content is not a valid JPEG' });
     }
 
     return next();
