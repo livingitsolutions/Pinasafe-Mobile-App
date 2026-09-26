@@ -4,9 +4,8 @@ const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
-const { classifyEvidenceImage } = require('../services/aiClassificationService');
+const { persistEvidenceImage } = require('../services/evidencePersistenceService');
 const { MAX_EVIDENCE_BYTES } = require('../services/evidenceStorageService');
-const { getJpegDimensions } = require('../services/jpegDimensionsService');
 const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
@@ -137,12 +136,6 @@ const parseMultipartImage = (req, res, next) => {
       return res.status(400).json({ error: 'Image content is not a valid JPEG signature' });
     }
 
-    try {
-      getJpegDimensions(imageBuffer);
-    } catch (error) {
-      return res.status(400).json({ error: 'Image content is not a valid JPEG' });
-    }
-
     return next();
   });
 };
@@ -228,13 +221,36 @@ router.post(
   parseMultipartImage,
   async (req, res) => {
     try {
-      const classification = await classifyEvidenceImage(req.file.buffer);
-      return res.status(200).json({ data: classification });
-    } catch (error) {
-      if (!error?.code?.startsWith('AI_CLASSIFIER_')) {
-        safeLogger.error('evidence.classification_failed');
+      const result = await persistEvidenceImage({
+        imageBuffer: req.file.buffer,
+        sessionId: req.params.sessionId,
+        ownerUserId: req.user.id
+      });
+
+      if (!result.accepted) {
+        return res.status(200).json({ data: result.classification });
       }
-      return res.status(503).json({ error: 'Classification service unavailable' });
+
+      return res.status(201).json({ data: result });
+    } catch (error) {
+      if (error?.code === 'INVALID_JPEG') {
+        return res.status(400).json({ error: 'Image content is not a valid JPEG' });
+      }
+
+      if (error?.code === 'SESSION_UNAVAILABLE') return notFound(res);
+      if (error?.code === 'CAPACITY_REACHED') {
+        return res.status(409).json({ error: 'Evidence session capacity reached' });
+      }
+      if (error?.code === 'RESERVATION_CONFLICT') {
+        return res.status(409).json({ error: 'Evidence reservation conflict' });
+      }
+      if (error?.code === 'CLASSIFIER_UNAVAILABLE') {
+        safeLogger.error('evidence.classification_failed');
+        return res.status(503).json({ error: 'Classification service unavailable' });
+      }
+
+      safeLogger.error('evidence.persistence_failed');
+      return res.status(503).json({ error: 'Evidence persistence unavailable' });
     }
   }
 );
