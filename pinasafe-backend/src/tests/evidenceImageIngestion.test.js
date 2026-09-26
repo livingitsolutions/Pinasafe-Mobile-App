@@ -26,13 +26,27 @@ jest.mock('../services/evidenceStorageService', () => ({
   deleteEvidenceObject: jest.fn()
 }));
 
+jest.mock('../services/aiClassificationService', () => ({
+  classifyEvidenceImage: jest.fn()
+}));
+
 const { getClient } = require('../config/database');
 const evidenceStorageService = require('../services/evidenceStorageService');
+const { classifyEvidenceImage } = require('../services/aiClassificationService');
 const evidenceRouter = require('../routes/evidence');
 
 const sessionId = '123e4567-e89b-12d3-a456-426614174000';
 const citizen = { id: '123e4567-e89b-12d3-a456-426614174001', role: 'citizen' };
 const MAX_EVIDENCE_BYTES = evidenceStorageService.MAX_EVIDENCE_BYTES;
+const acceptedClassification = {
+  accepted: true,
+  label: 'fire',
+  confidence: 0.9,
+  status: 'valid',
+  action: 'accept',
+  reason: 'Fire confirmed',
+  caption: 'Smoke visible'
+};
 
 const buildSessionQuery = ({ data, error = null } = {}) => {
   const query = {
@@ -79,6 +93,7 @@ const attachImage = (app, { field = 'image', buffer = validJpeg(), mimeType = 'i
 describe('strict evidence multipart ingestion boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    classifyEvidenceImage.mockResolvedValue(acceptedClassification);
   });
 
   test('rejects unauthenticated requests before database lookup', async () => {
@@ -108,9 +123,10 @@ describe('strict evidence multipart ingestion boundary', () => {
     const { query } = buildSessionQuery({ data: activeSession() });
     const response = await attachImage(buildApp());
 
-    expect(response.status).toBe(202);
+    expect(response.status).toBe(200);
     expect(query.eq).toHaveBeenNthCalledWith(1, 'id', sessionId);
     expect(query.eq).toHaveBeenNthCalledWith(2, 'owner_user_id', citizen.id);
+    expect(classifyEvidenceImage).toHaveBeenCalledWith(expect.any(Buffer));
   });
 
   test.each([
@@ -188,12 +204,11 @@ describe('strict evidence multipart ingestion boundary', () => {
     const image = validJpeg();
     const response = await attachImage(buildApp(), { buffer: image });
 
-    expect(response.status).toBe(202);
-    expect(response.body).toEqual({
-      data: { accepted: true, mimeType: 'image/jpeg', byteSize: image.length }
-    });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ data: acceptedClassification });
     expect(response.text).not.toContain('private-original-name.jpg');
     expect(response.text).not.toContain(image.toString('base64'));
+    expect(classifyEvidenceImage).toHaveBeenCalledWith(image);
     expect(evidenceStorageService.uploadEvidenceObject).not.toHaveBeenCalled();
     expect(evidenceStorageService.deleteEvidenceObject).not.toHaveBeenCalled();
     expect(from).toHaveBeenCalledTimes(1);
@@ -226,8 +241,8 @@ describe('strict evidence multipart ingestion boundary', () => {
     const image = validJpeg(MAX_EVIDENCE_BYTES);
     const response = await attachImage(buildApp(), { buffer: image });
 
-    expect(response.status).toBe(202);
-    expect(response.body.data.byteSize).toBe(MAX_EVIDENCE_BYTES);
+    expect(response.status).toBe(200);
+    expect(classifyEvidenceImage).toHaveBeenCalledWith(image);
   });
 
   test('application explicitly checks the buffer size before JPEG signatures', () => {
@@ -260,6 +275,60 @@ describe('strict evidence multipart ingestion boundary', () => {
     expect(from).toHaveBeenCalledTimes(1);
     expect(evidenceStorageService.uploadEvidenceObject).not.toHaveBeenCalled();
     expect(evidenceStorageService.deleteEvidenceObject).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['unsupported label', { accepted: false, label: 'other', confidence: 0.4, status: 'valid', action: 'accept', reason: null, caption: null }],
+    ['invalid status', { accepted: false, label: 'fire', confidence: 0.9, status: 'invalid', action: 'accept', reason: null, caption: null }],
+    ['reject action', { accepted: false, label: 'fire', confidence: 0.9, status: 'valid', action: 'reject', reason: null, caption: null }],
+    ['uncertain action', { accepted: false, label: 'fire', confidence: 0.9, status: 'valid', action: 'uncertain', reason: null, caption: null }]
+  ])('returns HTTP 200 for legitimate model rejection: %s', async (_, rejectedClassification) => {
+    buildSessionQuery({ data: activeSession() });
+    classifyEvidenceImage.mockResolvedValue(rejectedClassification);
+
+    const response = await attachImage(buildApp());
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ data: rejectedClassification });
+  });
+
+  test('returns a generic 503 when classification infrastructure fails', async () => {
+    buildSessionQuery({ data: activeSession() });
+    classifyEvidenceImage.mockRejectedValue(new Error('provider URL and body secret'));
+
+    const response = await attachImage(buildApp());
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: 'Classification service unavailable' });
+    expect(response.text).not.toContain('provider URL');
+    expect(response.text).not.toContain('secret');
+  });
+
+  test('returns only generic 503 for invalid provider decision fields', async () => {
+    buildSessionQuery({ data: activeSession() });
+    classifyEvidenceImage.mockRejectedValue(Object.assign(
+      new Error('private provider field value'),
+      { code: 'AI_CLASSIFIER_INVALID_RESPONSE' }
+    ));
+
+    const response = await attachImage(buildApp());
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: 'Classification service unavailable' });
+    expect(response.text).not.toContain('private provider field value');
+    expect(response.text).not.toContain('AI_CLASSIFIER_INVALID_RESPONSE');
+  });
+
+  test('client multipart classification metadata cannot influence the server result', async () => {
+    buildSessionQuery({ data: activeSession() });
+    const response = await request(buildApp())
+      .post(`/api/evidence/sessions/${sessionId}/image`)
+      .field('label', 'road')
+      .field('confidence', '1')
+      .attach('image', validJpeg(), { filename: 'client.jpg', contentType: 'image/jpeg' });
+
+    expect(response.status).toBe(400);
+    expect(classifyEvidenceImage).not.toHaveBeenCalled();
   });
 
   test('normalizes parser failures without returning internals', async () => {

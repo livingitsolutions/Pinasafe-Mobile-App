@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
+const { classifyEvidenceImage } = require('../services/aiClassificationService');
 const { MAX_EVIDENCE_BYTES } = require('../services/evidenceStorageService');
 const safeLogger = require('../utils/safeLogger');
 
@@ -218,13 +219,17 @@ router.post(
   validateUUID('sessionId'),
   requireActiveOwnedSession,
   parseMultipartImage,
-  (req, res) => res.status(202).json({
-    data: {
-      accepted: true,
-      mimeType: JPEG_MIME_TYPE,
-      byteSize: req.file.buffer.length
+  async (req, res) => {
+    try {
+      const classification = await classifyEvidenceImage(req.file.buffer);
+      return res.status(200).json({ data: classification });
+    } catch (error) {
+      if (!error?.code?.startsWith('AI_CLASSIFIER_')) {
+        safeLogger.error('evidence.classification_failed');
+      }
+      return res.status(503).json({ error: 'Classification service unavailable' });
     }
-  })
+  }
 );
 
 module.exports = router;

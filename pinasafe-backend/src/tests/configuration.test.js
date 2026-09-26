@@ -6,6 +6,8 @@ const configurationNames = [
   'SUPABASE_SERVICE_ROLE_KEY',
   'JWT_SECRET',
   'EVIDENCE_STORAGE_BUCKET',
+  'AI_ENDPOINT_URL',
+  'EXPO_PUBLIC_AI_ENDPOINT_URL',
   'CORS_ORIGIN',
   'VITE_SUPABASE_URL',
   'EXPO_PUBLIC_SUPABASE_URL'
@@ -16,6 +18,7 @@ const validConfiguration = {
   SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
   JWT_SECRET: 'a'.repeat(32),
   EVIDENCE_STORAGE_BUCKET: 'private-evidence',
+  AI_ENDPOINT_URL: 'https://classifier.example/predict',
   CORS_ORIGIN: 'http://localhost:8081'
 };
 
@@ -44,6 +47,7 @@ describe('backend configuration validation', () => {
     ['SUPABASE_URL', { SUPABASE_URL: undefined }],
     ['SUPABASE_SERVICE_ROLE_KEY', { SUPABASE_SERVICE_ROLE_KEY: undefined }],
     ['JWT_SECRET', { JWT_SECRET: undefined }],
+    ['AI_ENDPOINT_URL', { AI_ENDPOINT_URL: undefined }],
     ['CORS_ORIGIN', { CORS_ORIGIN: undefined }]
   ])('rejects missing %s', (name, values) => {
     setConfiguration(values);
@@ -73,6 +77,32 @@ describe('backend configuration validation', () => {
 
       expect(() => validateConfiguration()).toThrow(/EVIDENCE_STORAGE_BUCKET/);
     });
+
+  test('does not use the public Expo AI endpoint as a backend fallback', () => {
+    setConfiguration({
+      AI_ENDPOINT_URL: undefined,
+      EXPO_PUBLIC_AI_ENDPOINT_URL: 'https://public-classifier.example/predict'
+    });
+
+    expect(() => validateConfiguration()).toThrow(/AI_ENDPOINT_URL/);
+  });
+
+  test.each([
+    'http://classifier.example/predict',
+    'not-a-url',
+    'https://user:password@classifier.example/predict',
+    'https://classifier.example/predict?token=value',
+    'https://classifier.example/predict#fragment',
+    'https://classifier.example/predict?',
+    'https://classifier.example/predict#',
+    'https://localhost/predict',
+    'https://127.0.0.1/predict',
+    'https://[::1]/predict'
+  ])('rejects unsafe AI_ENDPOINT_URL %j', (endpoint) => {
+    setConfiguration({ AI_ENDPOINT_URL: endpoint });
+
+    expect(() => validateConfiguration()).toThrow(/AI_ENDPOINT_URL/);
+  });
 
   test('accepts valid required backend configuration', () => {
     setConfiguration({

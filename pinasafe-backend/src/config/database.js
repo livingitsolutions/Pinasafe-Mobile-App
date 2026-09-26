@@ -1,4 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
+const { isIP } = require('node:net');
 const { parseCorsOrigins } = require('./cors');
 const safeLogger = require('../utils/safeLogger');
 
@@ -12,6 +13,41 @@ const EVIDENCE_STORAGE_BUCKET_PLACEHOLDERS = new Set([
   'placeholder-bucket',
   'bucket-name'
 ]);
+
+const getAIEndpointUrl = () => {
+  const value = process.env.AI_ENDPOINT_URL;
+
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('Missing required backend configuration: AI_ENDPOINT_URL');
+  }
+
+  let endpoint;
+  try {
+    endpoint = new URL(value);
+  } catch (error) {
+    throw new Error('Invalid backend configuration: AI_ENDPOINT_URL');
+  }
+
+  const hostname = endpoint.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (
+    endpoint.protocol !== 'https:'
+    || !hostname
+    || endpoint.username
+    || endpoint.password
+    || endpoint.search
+    || endpoint.hash
+    || value.includes('?')
+    || value.includes('#')
+    || hostname === 'localhost'
+    || hostname.endsWith('.localhost')
+    || hostname.endsWith('.local')
+    || isIP(hostname) !== 0
+  ) {
+    throw new Error('Invalid backend configuration: AI_ENDPOINT_URL');
+  }
+
+  return endpoint.href;
+};
 
 const getEvidenceStorageBucket = () => {
   const value = process.env.EVIDENCE_STORAGE_BUCKET;
@@ -37,7 +73,8 @@ const validateConfiguration = () => {
     ['SUPABASE_URL', process.env.SUPABASE_URL],
     ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY],
     ['JWT_SECRET', process.env.JWT_SECRET],
-    ['EVIDENCE_STORAGE_BUCKET', process.env.EVIDENCE_STORAGE_BUCKET]
+    ['EVIDENCE_STORAGE_BUCKET', process.env.EVIDENCE_STORAGE_BUCKET],
+    ['AI_ENDPOINT_URL', process.env.AI_ENDPOINT_URL]
   ];
 
   for (const [name, value] of requiredConfiguration) {
@@ -48,6 +85,7 @@ const validateConfiguration = () => {
 
   parseCorsOrigins(process.env.CORS_ORIGIN);
   getEvidenceStorageBucket();
+  getAIEndpointUrl();
 
   if (
     process.env.JWT_SECRET === JWT_SECRET_PLACEHOLDER
@@ -101,6 +139,7 @@ async function executeInsert(query, params = []) {
 module.exports = {
   connectDatabase,
   getClient,
+  getAIEndpointUrl,
   getEvidenceStorageBucket,
   parseCorsOrigins,
   validateConfiguration,
