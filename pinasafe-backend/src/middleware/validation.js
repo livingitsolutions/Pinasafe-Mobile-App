@@ -1,4 +1,5 @@
 const { body, param, query, validationResult } = require('express-validator');
+const { validate: isValidUuid } = require('uuid');
 
 const phonePattern = /^(\+63|0)?[-\s]?\d{3}[-\s]?\d{3}[-\s]?\d{4}$/;
 
@@ -24,6 +25,33 @@ const matchingAliases = (primary, alias, label) => body(primary)
     }
     return true;
   });
+
+const DURABLE_EVIDENCE_IDENTITY_KEYS = new Set([
+  'bucket',
+  'bucketname',
+  'storagebucket',
+  'storagebucketname',
+  'storagepath',
+  'storagekey',
+  'storageobjectkey',
+  'objectkey',
+  'filekey',
+  'evidenceid',
+  'evidencerowid',
+  'reportevidenceid',
+  'signedurl',
+  'signeduri'
+]);
+
+const containsDurableEvidenceMetadata = (value) => {
+  if (!value || typeof value !== 'object') return false;
+
+  return Object.entries(value).some(([key, child]) => {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return DURABLE_EVIDENCE_IDENTITY_KEYS.has(normalizedKey)
+      || containsDurableEvidenceMetadata(child);
+  });
+};
 
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
@@ -118,6 +146,23 @@ const validateEmergencyReport = [
     .optional()
     .matches(/^(\+63|0)?[-\s]?\d{3}[-\s]?\d{3}[-\s]?\d{4}$/)
     .withMessage('Invalid contact number'),
+  body('uploadSessionId')
+    .optional({ values: 'null' })
+    .custom((value) => value === '' || (typeof value === 'string' && isValidUuid(value)))
+    .withMessage('Upload session ID must be a valid UUID')
+    .bail()
+    .custom((value, { req }) => {
+      if (
+        value
+        && (
+          containsDurableEvidenceMetadata(req.body.evidence)
+          || containsDurableEvidenceMetadata(req.body.aiClassification)
+        )
+      ) {
+        throw new Error('Durable evidence metadata must be created by the server');
+      }
+      return true;
+    }),
   handleValidationErrors
 ];
 

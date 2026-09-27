@@ -9,10 +9,65 @@ const {
   validateUUID,
   validatePagination
 } = require('../middleware/validation');
+const {
+  EmergencyReportBindingError,
+  createEmergencyReportWithEvidence
+} = require('../services/emergencyReportBindingService');
 const clusteringService = require('../services/incidentClusteringService');
 const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
+const BINDING_ERROR_RESPONSES = {
+  INVALID_REPORT: [400, 'Invalid emergency report or evidence'],
+  INVALID_REPORT_ID: [400, 'Invalid emergency report or evidence'],
+  INVALID_REPORTER_ID: [400, 'Invalid emergency report or evidence'],
+  INVALID_CLASSIFICATION: [400, 'Invalid emergency report or evidence'],
+  CLASSIFICATION_MISMATCH: [400, 'Invalid emergency report or evidence'],
+  EVIDENCE_CAPACITY_INVALID: [400, 'Invalid emergency report or evidence'],
+  SESSION_UNAVAILABLE: [404, 'Evidence upload session unavailable'],
+  SESSION_EXPIRED: [409, 'Emergency report conflicts with evidence session'],
+  SESSION_ALREADY_BOUND: [409, 'Emergency report conflicts with evidence session'],
+  UPLOAD_IN_PROGRESS: [409, 'Emergency report conflicts with evidence session'],
+  EXPIRED_EVIDENCE_PRESENT: [409, 'Emergency report conflicts with evidence session'],
+  EVIDENCE_OWNER_MISMATCH: [409, 'Emergency report conflicts with evidence session'],
+  EVIDENCE_ALREADY_BOUND: [409, 'Emergency report conflicts with evidence session'],
+  NO_ACCEPTED_EVIDENCE: [409, 'Emergency report conflicts with evidence session'],
+  REPORT_ID_CONFLICT: [409, 'Emergency report conflicts with evidence session']
+};
+const REPORT_FETCH_ATTEMPTS = 3;
+
+const fetchPersistedReport = async (reportId) => {
+  for (let attempt = 0; attempt < REPORT_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const { data, error } = await getClient()
+        .from('emergency_reports')
+        .select('*')
+        .eq('id', reportId)
+        .maybeSingle();
+
+      if (!error && data) return data;
+    } catch (error) {
+      // Retry this read only; report creation has already completed.
+    }
+  }
+
+  return null;
+};
+
+const getBoundReportId = async (uploadSessionId, reporterId) => {
+  try {
+    const { data, error } = await getClient()
+      .from('evidence_upload_sessions')
+      .select('emergency_report_id')
+      .eq('id', uploadSessionId)
+      .eq('owner_user_id', reporterId)
+      .maybeSingle();
+
+    return error ? null : data?.emergency_report_id || null;
+  } catch (error) {
+    return null;
+  }
+};
 
 router.get('/', authenticateToken, validatePagination, async (req, res) => {
   try {
@@ -138,57 +193,63 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
       priority,
       evidence,
       aiClassification,
-      useAIClassification
+      useAIClassification,
+      uploadSessionId
     } = req.body;
 
     const reportId = uuidv4();
-    const title = `${type.charAt(0).toUpperCase() + type.slice(1)} Emergency`;
-    const supabase = getClient();
+    const normalizedUploadSessionId = uploadSessionId || null;
+    const result = await createEmergencyReportWithEvidence({
+      type,
+      description,
+      location,
+      coordinates,
+      contactNumber,
+      priority,
+      uploadSessionId: normalizedUploadSessionId,
+      evidencePhotos: normalizedUploadSessionId ? [] : (evidence?.photos || []),
+      aiClassification,
+      useAIClassification
+    }, req.user.id, reportId);
 
-    const { data: report, error } = await supabase
-      .from('emergency_reports')
-      .insert({
-        id: reportId,
-        reported_by: req.user.id,
-        type,
-        title,
-        description,
-        location,
-        latitude: coordinates?.latitude ?? null,
-        longitude: coordinates?.longitude ?? null,
-        contact_number: contactNumber || null,
-        priority,
-        evidence_photos: evidence?.photos || [],
-        ai_classification: aiClassification || null,
-        use_ai_classification: useAIClassification || false
-      })
-      .select()
-      .single();
+    let report = await fetchPersistedReport(reportId);
 
-    if (error) {
+    if (!report && normalizedUploadSessionId) {
+      const boundReportId = await getBoundReportId(normalizedUploadSessionId, req.user.id);
+      if (boundReportId === reportId) {
+        report = await fetchPersistedReport(boundReportId);
+      }
+    }
+
+    if (!report) {
       safeLogger.error('emergency.report_create_failed');
       return res.status(500).json({ error: 'Failed to create emergency report' });
     }
 
-    try {
-      const existingClusterId = await clusteringService.findMatchingCluster(report);
+    if (
+      (result.outcome === 'CREATED' || result.outcome === 'REPLAYED')
+      && !report.cluster_id
+    ) {
+      try {
+        const existingClusterId = await clusteringService.findMatchingCluster(report);
 
-      if (existingClusterId) {
-        await clusteringService.addToCluster(existingClusterId, report.id, req.user.id);
-        report.cluster_id = existingClusterId;
+        if (existingClusterId) {
+          await clusteringService.addToCluster(existingClusterId, report.id, req.user.id);
+          report.cluster_id = existingClusterId;
 
-        await clusteringService.notifyClusterSubscribers(
-          existingClusterId,
-          `New ${type} incident reported in ${location}`,
-          'pending',
-          req.user.id
-        );
-      } else {
-        const clusterId = await clusteringService.createCluster(report.id, req.user.id);
-        report.cluster_id = clusterId;
+          await clusteringService.notifyClusterSubscribers(
+            existingClusterId,
+            `New ${type} incident reported in ${location}`,
+            'pending',
+            req.user.id
+          );
+        } else {
+          const clusterId = await clusteringService.createCluster(report.id, req.user.id);
+          report.cluster_id = clusterId;
+        }
+      } catch (clusterError) {
+        safeLogger.error('emergency.report_clustering_failed');
       }
-    } catch (clusterError) {
-      safeLogger.error('emergency.report_clustering_failed');
     }
 
     res.status(201).json({
@@ -197,6 +258,15 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
     });
 
   } catch (error) {
+    if (error instanceof EmergencyReportBindingError) {
+      const [status, message] = BINDING_ERROR_RESPONSES[error.code] || [
+        500,
+        'Failed to create emergency report'
+      ];
+      safeLogger.error('emergency.report_create_failed');
+      return res.status(status).json({ error: message });
+    }
+
     safeLogger.error('emergency.report_create_failed');
     res.status(500).json({ error: 'Failed to create emergency report' });
   }

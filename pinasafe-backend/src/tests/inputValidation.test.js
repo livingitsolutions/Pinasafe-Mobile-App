@@ -11,6 +11,11 @@ jest.mock('../config/database', () => ({
   getClient: jest.fn()
 }));
 
+jest.mock('../services/emergencyReportBindingService', () => ({
+  EmergencyReportBindingError: class EmergencyReportBindingError extends Error {},
+  createEmergencyReportWithEvidence: jest.fn()
+}));
+
 jest.mock('../services/incidentClusteringService', () => ({
   findMatchingCluster: jest.fn().mockResolvedValue(null),
   createCluster: jest.fn().mockResolvedValue('cluster-1'),
@@ -19,6 +24,7 @@ jest.mock('../services/incidentClusteringService', () => ({
 }));
 
 const { getClient } = require('../config/database');
+const { createEmergencyReportWithEvidence } = require('../services/emergencyReportBindingService');
 const emergencyRouter = require('../routes/emergency');
 const locationTrackingRouter = require('../routes/location-tracking');
 const {
@@ -59,6 +65,10 @@ const expectRejected = async (validators, payload) => {
 describe('A.5.5I input and range validation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    createEmergencyReportWithEvidence.mockResolvedValue({
+      reportId: validUUID,
+      outcome: 'CREATED'
+    });
   });
 
   test('accepts zero latitude and longitude and preserves them through emergency persistence', async () => {
@@ -76,7 +86,7 @@ describe('A.5.5I input and range validation', () => {
     const app = express();
     app.use(express.json());
     app.use((req, res, next) => {
-      req.user = { id: 'citizen-1', role: 'citizen', organization_id: null };
+      req.user = { id: validUUID, role: 'citizen', organization_id: null };
       next();
     });
     app.use('/emergency-reports', emergencyRouter);
@@ -92,10 +102,14 @@ describe('A.5.5I input and range validation', () => {
       });
 
     expect(response.status).toBe(201);
-    expect(reportQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
-      latitude: 0,
-      longitude: 0
-    }));
+    expect(createEmergencyReportWithEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        coordinates: { latitude: 0, longitude: 0 },
+        uploadSessionId: null
+      }),
+      validUUID,
+      expect.any(String)
+    );
   });
 
   test('accepts zero location telemetry values and preserves them in the insert', async () => {
