@@ -153,4 +153,23 @@ describe('apiService (F2 foundation)', () => {
 
     expect(result.data?.mustChangePassword).toBe(true);
   });
+
+  test('creates an evidence session using the backend contract', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: { id: 'session', status: 'active', expiresAt: 'soon' } }));
+    const result = await apiService.createEvidenceSession();
+    expect(result.data?.data.id).toBe('session');
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/evidence/sessions'), expect.objectContaining({ method: 'POST', body: '{}' }));
+  });
+
+  test('uploads JPEG evidence as the image multipart field and uses server classification', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { data: { accepted: false, label: 'other', confidence: 0.2, status: 'valid', action: 'reject', reason: 'Not an incident', caption: null } }));
+    const result = await apiService.uploadEvidenceImage('session-id', { uri: 'local-test-uri' });
+    expect(result.data?.data.accepted).toBe(false);
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.method).toBe('POST');
+    expect(request.body).toBeInstanceOf(FormData);
+    expect(request.headers).toEqual({});
+  });
 });

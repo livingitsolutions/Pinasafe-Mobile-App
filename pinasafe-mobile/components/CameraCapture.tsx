@@ -4,26 +4,19 @@ import {
   Text,
   TouchableOpacity,
   Alert,
-  Dimensions,
   ActivityIndicator,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
-import * as Location from "expo-location";
 import { X, RotateCcw, Camera as CameraIcon } from "lucide-react-native";
-import { aiClassificationService, ClassificationResult, EmergencyEvidence } from "@/hooks/AIClassificationService";
-
-const { height } = Dimensions.get("window");
 
 interface CameraCaptureProps {
-  onAutoSubmit: (evidence: EmergencyEvidence, classification: ClassificationResult) => void;
-  onReject: () => void; 
+  onCapture: (uri: string) => Promise<void>;
   onCancel: () => void;
 }
 
 export default function CameraCapture({
-  onAutoSubmit,
-  onReject,
+  onCapture,
   onCancel,
 }: CameraCaptureProps) {
   const cameraRef = useRef<CameraView>(null);
@@ -36,7 +29,7 @@ export default function CameraCapture({
     (async () => {
       if (!permission?.granted) await requestPermission();
     })();
-  }, [permission]);
+  }, [permission, requestPermission]);
 
   /** ✅ Resize + compress image → 500x500, 100% quality */
   const compressImage = async (uri: string) => {
@@ -63,115 +56,13 @@ export default function CameraCapture({
       /** ✅ Compress */
       const compressed = await compressImage(rawPhoto.uri);
 
-      /** ✅ Get user location (best effort) */
-      let coords = null;
-      let address = null;
-      let place = null;
-
-      try {
-        const perm = await Location.requestForegroundPermissionsAsync();
-        if (perm.status === "granted") {
-          const pos = await Location.getCurrentPositionAsync({});
-          coords = pos.coords;
-
-          const places = await Location.reverseGeocodeAsync({
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-          });
-
-          if (places?.length > 0) {
-            place = places[0];
-            address = [place.name, place.street, place.city, place.region, place.country]
-              .filter(Boolean)
-              .join(", ");
-          }
-        }
-      } catch {
-        console.warn("Location fetch failed.");
-      }
-
-      const evidence: EmergencyEvidence = {
-        photos: [compressed.uri],
-        timestamp: new Date().toISOString(),
-        location: coords,
-        address,
-      };
-
-      /** ✅ AI Classification */
-      const cls = await aiClassificationService.classifyImage(compressed.uri);
-
-      const label = cls.label?.toLowerCase();
-      const confidence = Math.round((cls.confidence ?? 0) * 100);
-
-      const Labeltitle = label === "fire" ? "Fire Incident" : "Road Accident";
-
-      /** ✅ Build beautiful alert header */
-      const alertTitle = `🔥 AI Result: ${Labeltitle ?? "Unknown"}`;
-      const alertMsg =
-        `\n• Incident Description: ${cls.caption ?? "No caption"}\n\n` +
-        `• Confidence Level: ${confidence}%\n\n`;
-
-      /** ✅ Only allow FIRE and ROAD */
-      const allowed = ["fire", "road"];     
-
-      
-
-      if (cls.action === "accept" && cls.status === "valid" && allowed.includes(label)) {
-
-        const isInLeyte  =
-              
-              (place?.region?.toLowerCase().includes("leyte") ||
-              place?.region?.toLowerCase().includes("eastern visayas")
-            );
-
-          if (!isInLeyte) {
-            Alert.alert(
-              "Incident Captured Rejected!!!",
-              alertMsg +
-                "⚠️ This incident must be captured within Leyte.",
-              [{ text: "Retake", onPress: onReject }]
-            );
-
-            return onReject();
-          }
-        // ✅ Auto-submit
-        // onAutoSubmit(evidence, cls);
-        Alert.alert(
-          alertTitle,
-          alertMsg,
-          [
-            {
-              text: "OK",
-              onPress: () => {
-                onAutoSubmit(evidence, cls);
-              },
-            },
-          ]
-        );
-        return;
-        
-      }
-
-      /** ❌ Uncertain OR invalid OR wrong label -> Reject */
-      Alert.alert(
-        "Incident Captured Rejected!!!",
-        alertMsg +
-          "⚠️ Please retake a clear photo of the incident.\n\n(Only fire or road accidents are recognized)",
-        [{ text: "Retake", onPress: onReject }]
-      );
-
-      onReject();
-      return;
-    } catch (err) {
-      console.error(err);
-
+      await onCapture(compressed.uri);
+    } catch {
       Alert.alert(
         "Capture Error",
         "Something went wrong while capturing the image.\n\nPlease try again.",
-        [{ text: "OK", onPress: onReject }]
+        [{ text: "OK" }]
       );
-
-      onReject();
     } finally {
       setIsProcessing(false);
     }
@@ -268,7 +159,7 @@ export default function CameraCapture({
             }}
           >
             <ActivityIndicator size="large" color="#fff" />
-            <Text style={{ color: "white", marginTop: 8 }}>Analyzing image…</Text>
+            <Text style={{ color: "white", marginTop: 8 }}>Uploading and classifying…</Text>
           </View>
         )}
 
@@ -295,7 +186,7 @@ export default function CameraCapture({
         </TouchableOpacity>
 
         <Text style={{ color: "white", marginTop: 14 }}>
-          Take one clear photo — AI will auto-submit
+          Take a clear photo for server verification
         </Text>
       </View>
     </View>
@@ -879,4 +770,3 @@ export default function CameraCapture({
 //     </View>
 //   );
 // }
-

@@ -62,7 +62,9 @@ class OrganizationAlertService {
   private isInitialized = false;
 
   constructor() {
-    this.initializeOrganizations();
+    if (typeof window !== 'undefined') {
+      void this.initializeOrganizations();
+    }
   }
 
   // Load organizations from database
