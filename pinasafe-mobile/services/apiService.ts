@@ -46,6 +46,10 @@ interface LoginResponse {
   mustChangePassword?: boolean;
 }
 
+export interface PersonnelInvitationAcceptanceResponse {
+  message?: string;
+}
+
 export interface EmergencyReportData {
   type: 'road' | 'fire';
   description: string;
@@ -231,6 +235,16 @@ class APIService {
     }
 
     return response;
+  }
+
+  async acceptPersonnelInvitation(
+    token: string,
+    password: string
+  ): Promise<APIResponse<PersonnelInvitationAcceptanceResponse>> {
+    return this.request('/auth/personnel-invitations/accept', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    });
   }
 
   async logout(): Promise<void> {

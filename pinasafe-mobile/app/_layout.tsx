@@ -17,6 +17,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs-responder)" />
           <Stack.Screen name="(tabs-admin)" />
           <Stack.Screen name="index" />
+          <Stack.Screen name="accept-personnel-invitation" />
           <Stack.Screen name="+not-found" />
         </Stack>
         <StatusBar style="auto" />
