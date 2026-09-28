@@ -174,6 +174,23 @@ describe('apiService (F2 foundation)', () => {
     );
   });
 
+  test('responder lifecycle uses the exact PUT endpoint and status-only body', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, {
+      data: { id: 'report-1', status: 'responding' },
+    }));
+
+    await apiService.updateResponderLifecycleStatus('report-1', 'responding');
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://pinasafe-test-api.example.com/api/emergency-reports/report-1',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ status: 'responding' }),
+      })
+    );
+  });
+
   test('web evidence upload sends actual JPEG Blob bytes with the expected filename', async () => {
     apiService.setToken('valid-token');
     (global as any).window = {};
