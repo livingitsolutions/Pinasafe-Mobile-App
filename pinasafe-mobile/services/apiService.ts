@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isClientRuntime } from '@/utils/clientRuntime';
 
 interface APIResponse<T = any> {
   data?: T;
@@ -119,7 +120,7 @@ class APIService {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<APIResponse<T>> {
-    if (!this.token && typeof window !== 'undefined') {
+    if (!this.token && isClientRuntime()) {
       const storedToken = await AsyncStorage.getItem('auth_token');
       if (storedToken) this.token = storedToken;
     }

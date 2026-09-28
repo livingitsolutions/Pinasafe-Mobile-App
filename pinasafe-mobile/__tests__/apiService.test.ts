@@ -4,7 +4,10 @@
  * no production/external systems are contacted.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { apiService, ApiError, isApiError } from '../services/apiService';
+
+jest.mock('react-native', () => ({ Platform: { OS: 'web' } }));
 
 const jsonResponse = (status: number, body: unknown): Response =>
   ({
@@ -21,6 +24,7 @@ describe('apiService (F2 foundation)', () => {
     AsyncStorage.__resetMockStorage?.();
     await apiService.clearLocalSession();
     apiService.onSessionExpired(null);
+    (Platform as { OS: string }).OS = 'web';
   });
 
   test('A. successful request resolves normally with data', async () => {
@@ -138,6 +142,16 @@ describe('apiService (F2 foundation)', () => {
 
     expect(result.data.user).toEqual({ id: '1', role: 'citizen' });
     expect(apiService.isAuthenticated()).toBe(true);
+  });
+
+  test('restores an AsyncStorage token in a native runtime', async () => {
+    (Platform as { OS: string }).OS = 'ios';
+    await AsyncStorage.setItem('auth_token', 'native-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { user: { id: '1' } }));
+
+    await apiService.getProfile();
+
+    expect(apiService.getToken()).toBe('native-token');
   });
 
   test('M. login response passes mustChangePassword through unchanged', async () => {
