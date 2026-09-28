@@ -1,22 +1,27 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, Linking, Platform, RefreshControl } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Radio, MapPin, Clock, AlertTriangle, Phone, Navigation } from 'lucide-react-native';
+import { Radio, MapPin, Clock, Navigation } from 'lucide-react-native';
 import { useEmergency } from '@/contexts/EmergencyContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { locationService } from '@/hooks/locationService';
-import { organizationAlertService } from '@/services/organizationAlertService';
 import { router } from 'expo-router';
 import { IncidentAlertNotification } from '@/components/IncidentAlertNotification';
 import { apiService } from '@/services/apiService';
+import {
+  getResponderLifecycleAction,
+  getResponderLifecycleErrorMessage,
+  runResponderLifecycle,
+} from '@/utils/responderLifecycle';
 
 const ResponderDispatch: React.FC = () => {
-  const { reports, updateReportStatus, getClusteredIncidents } = useEmergency();
+  const { refreshReports, getClusteredIncidents } = useEmergency();
   const { user } = useAuth();
   const clusteredIncidents = getClusteredIncidents();
   const [teamData, setTeamData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const lifecycleLocks = useRef<Record<string, { current: boolean }>>({});
+  const [updatingIncidentId, setUpdatingIncidentId] = useState<string | null>(null);
 
  
   useEffect(() => {
@@ -59,32 +64,17 @@ const ResponderDispatch: React.FC = () => {
     return `${diffInDays} day${diffInDays > 1 ? 's' : ''} ago`;
   };
 
-  const calculateDistance = (report: any): string => {
-    if (report.coordinates) {
-      // In a real app, you'd get responder's current location
-      // For now, using Hilongos center as responder location
-      const responderLat = 10.3929;
-      const responderLon = 124.7544;
-      
-      const distance = locationService.calculateDistance(
-        responderLat,
-        responderLon,
-        report.coordinates.latitude,
-        report.coordinates.longitude
-      );
-      
-      return locationService.formatDistance(distance);
-    }
-    return '1.2 km'; // Fallback
-  };
-
   const activeIncidents = clusteredIncidents
-    .filter(cluster => cluster.status === 'pending' || cluster.status === 'dispatched')
+    .filter(cluster => {
+      const primary = cluster.primaryIncident as any;
+      return cluster.status === 'pending' ||
+        (cluster.status === 'dispatched' && primary.assigned_team_id === user?.teamId);
+    })
     .sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime())
     .map(cluster => ({
       ...cluster,
       type: `${cluster.type.charAt(0).toUpperCase() + cluster.type.slice(1)} ${cluster.totalReports > 1 ? 'Emergency Cluster' : 'Emergency'}`,
-      distance: calculateDistance(cluster.primaryIncident),
+      reportId: cluster.primaryIncident.id,
       time: getTimeAgo(cluster.lastUpdated),
       status: cluster.status === 'pending' ? 'Available' : 'Dispatched',
       description: cluster.totalReports > 1
@@ -101,7 +91,7 @@ const ResponderDispatch: React.FC = () => {
     .map(cluster => ({
       ...cluster,
       type: `${cluster.type.charAt(0).toUpperCase() + cluster.type.slice(1)} ${cluster.totalReports > 1 ? 'Emergency Cluster' : 'Emergency'}`,
-      distance: calculateDistance(cluster.primaryIncident),
+      reportId: cluster.primaryIncident.id,
       time: getTimeAgo(cluster.lastUpdated),
       description: cluster.totalReports > 1
         ? `${cluster.totalReports} related ${cluster.type} incidents in ${cluster.affectedArea}`
@@ -134,42 +124,38 @@ const ResponderDispatch: React.FC = () => {
     }
   };
 
-  const handleResolveIncident = async (incident: any) => {
-    Alert.alert(
-      'Resolve Incident',
-      'Are you sure you want to mark this incident as resolved?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Resolve',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await updateReportStatus(incident.id, 'resolved', `Resolved by ${user?.name}`);
-              Alert.alert('Success', 'Incident marked as resolved.');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to resolve incident.');
-            }
-          },
-        },
-      ]
-    );
-  };
+  const handleLifecycleAction = async (incident: any) => {
+    const action = getResponderLifecycleAction(incident.status);
+    if (!action) return;
+    const reportId = incident.reportId;
+    const lock = lifecycleLocks.current[reportId] || { current: false };
+    lifecycleLocks.current[reportId] = lock;
 
-  const handleAcceptIncident = async (incident: any) => {
     try {
-      await apiService.assignTeamToReport(incident.id, user?.teamId);
-      await updateReportStatus(incident.id, 'responding');
-      Alert.alert('Success', 'You / Your Team have accepted the incident.');
+      setUpdatingIncidentId(reportId);
+      const result = await runResponderLifecycle({
+        reportId,
+        currentStatus: incident.status,
+        lock,
+        update: (id, status) => apiService.updateResponderLifecycleStatus(id, status),
+        refresh: refreshReports,
+      });
+      if (result === 'updated') {
+        Alert.alert('Success', action.targetStatus === 'responding'
+          ? 'Incident is now marked as responding.'
+          : 'Incident marked as resolved.');
+      }
     } catch (error) {
-      Alert.alert('Error', 'Failed to accept incident.');
-    }  
-  };       
+      Alert.alert('Unable to update incident', getResponderLifecycleErrorMessage(error));
+    } finally {
+      setUpdatingIncidentId(current => current === reportId ? null : current);
+    }
+  };
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    loadTeamData().then(() => setRefreshing(false));
-  }, []);
+    Promise.all([loadTeamData(), refreshReports()]).finally(() => setRefreshing(false));
+  }, [refreshReports]);
 
 
 
@@ -273,16 +259,18 @@ const ResponderDispatch: React.FC = () => {
                         <Clock size={14} color="#6B7280" strokeWidth={1.5} />
                         <Text className="ml-2 text-sm text-gray-600">{incident.time}</Text>
                       </View>
-                      <Text className="text-sm text-gray-600">{incident.distance} away</Text>
                     </View>
                   </View>
 
                   <View className="flex-row gap-x-6">
                     <TouchableOpacity
                       className="flex-1 bg-green-600 py-3 rounded-lg flex-row items-center justify-center"
-                      onPress={() => handleResolveIncident(incident)}
+                      onPress={() => handleLifecycleAction({ ...incident, status: 'responding' })}
+                      disabled={updatingIncidentId === incident.reportId}
                     >
-                      <Text className="text-white font-semibold">Mark as Resolved</Text>
+                      <Text className="text-white font-semibold">
+                        {updatingIncidentId === incident.reportId ? 'Updating…' : 'Mark Resolved'}
+                      </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       className="flex-1 bg-blue-600 py-3 rounded-lg flex-row items-center justify-center"
@@ -335,19 +323,21 @@ const ResponderDispatch: React.FC = () => {
                       <Clock size={14} color="#6B7280" strokeWidth={1.5} />
                       <Text className="ml-2 text-sm text-gray-600">{incident.time}</Text>
                     </View>
-                    <Text className="text-sm text-gray-600">{incident.distance} away</Text>
                   </View>
                 </View>
 
                 {/* Action Buttons */}
                 <View className="flex-row ">
-                  {incident.status === 'Available' && (
+                  {incident.status === 'Dispatched' && (
                     <TouchableOpacity 
                       className="flex-1 bg-green-600 py-3 rounded-lg flex-row items-center justify-center"
-                      onPress={() => handleAcceptIncident(incident)}
+                      onPress={() => handleLifecycleAction({ ...incident, status: 'dispatched' })}
+                      disabled={updatingIncidentId === incident.reportId}
                     >
                       <Radio size={16} color="#FFFFFF" strokeWidth={1.5} />
-                      <Text className="text-white font-semibold ml-2">Accept</Text>
+                      <Text className="text-white font-semibold ml-2">
+                        {updatingIncidentId === incident.reportId ? 'Updating…' : 'Start Responding'}
+                      </Text>
                     </TouchableOpacity>
                   )}
                 </View>

@@ -340,6 +340,16 @@ class APIService {
     });
   }
 
+  async updateResponderLifecycleStatus(
+    reportId: string,
+    status: 'responding' | 'resolved'
+  ): Promise<APIResponse<any>> {
+    return this.request(`/emergency-reports/${reportId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
+  }
+
   async assignTeamToReport(reportId: string, teamId: string): Promise<APIResponse<{
     message: string;
     data: {
