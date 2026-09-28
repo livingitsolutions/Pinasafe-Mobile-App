@@ -10,6 +10,12 @@ import {
   Alert,
 } from 'react-native';
 import personnelService, { Personnel, CreatePersonnelInvitationData } from '../services/personnelService';
+import * as Clipboard from 'expo-clipboard';
+import * as Linking from 'expo-linking';
+import {
+  createPersonnelInvitationResult,
+  PersonnelInvitationResult,
+} from '../utils/personnelInvitation';
 
 export default function PersonnelManagement() {
   const [personnel, setPersonnel] = useState<Personnel[]>([]);
@@ -17,6 +23,7 @@ export default function PersonnelManagement() {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedPersonnel, setSelectedPersonnel] = useState<Personnel | null>(null);
   const [filter, setFilter] = useState<'all' | 'staff' | 'rescue_member'>('all');
+  const [invitationResult, setInvitationResult] = useState<PersonnelInvitationResult | null>(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -60,9 +67,12 @@ export default function PersonnelManagement() {
         personnelRole: formData.personnelRole,
       };
 
-      await personnelService.invitePersonnel(data);
-      Alert.alert('Success', 'Personnel invitation created successfully');
-      setModalVisible(false);
+      const invitation = await personnelService.invitePersonnel(data);
+      const origin =
+        typeof window !== 'undefined'
+          ? window.location.origin
+          : Linking.createURL('').replace(/\/$/, '');
+      setInvitationResult(createPersonnelInvitationResult(invitation, origin));
       resetForm();
     } catch (error: any) {
       Alert.alert('Error', error.response?.data?.error || 'Failed to create personnel invitation');
@@ -180,7 +190,20 @@ export default function PersonnelManagement() {
 
   const openCreateModal = () => {
     resetForm();
+    setInvitationResult(null);
     setModalVisible(true);
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setInvitationResult(null);
+    resetForm();
+  };
+
+  const copyInvitationLink = async () => {
+    if (!invitationResult) return;
+    await Clipboard.setStringAsync(invitationResult.url);
+    Alert.alert('Copied', 'Invitation link copied to clipboard.');
   };
 
   const filteredPersonnel = personnel.filter((person) => {
@@ -315,12 +338,39 @@ export default function PersonnelManagement() {
         animationType="slide"
         transparent={true}
         onRequestClose={() => {
-          setModalVisible(false);
-          resetForm();
+          closeModal();
         }}
       >
         <View className="flex-1 justify-center items-center bg-black/50">
           <View className="bg-white w-11/12 rounded-lg p-6">
+            {invitationResult ? (
+              <View>
+                <View className="bg-green-100 border border-green-200 rounded-xl p-4 mb-5">
+                  <Text className="text-xl font-bold text-green-900 mb-2">Invitation created</Text>
+                  <Text className="text-sm text-green-900">
+                    Share this private link with {invitationResult.email}.
+                  </Text>
+                </View>
+                <Text className="text-sm font-semibold text-gray-800 mb-2">Invitation link</Text>
+                <View className="bg-gray-100 border border-gray-200 rounded-lg p-3 mb-4">
+                  <Text className="text-sm text-gray-700" selectable numberOfLines={3}>
+                    {invitationResult.url}
+                  </Text>
+                </View>
+                <Text className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5">
+                  Copy this link now. For security, the invitation token is only returned when the invitation is created.
+                </Text>
+                <TouchableOpacity
+                  onPress={copyInvitationLink}
+                  className="bg-purple-600 py-3 rounded-lg mb-3"
+                >
+                  <Text className="text-white text-center font-semibold">Copy Invitation Link</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={closeModal} className="bg-gray-200 py-3 rounded-lg">
+                  <Text className="text-gray-800 text-center font-semibold">Done</Text>
+                </TouchableOpacity>
+              </View>
+            ) : <>
             <Text className="text-xl font-bold mb-4">
               {selectedPersonnel ? 'Edit Personnel' : 'Add Personnel'}
             </Text>
@@ -443,8 +493,7 @@ export default function PersonnelManagement() {
             <View className="flex-row justify-end mt-4 gap-x-2">
               <TouchableOpacity
                 onPress={() => {
-                  setModalVisible(false);
-                  resetForm();
+                  closeModal();
                 }}
                 className="bg-gray-300 px-4 py-3 rounded-lg mr-2"
               >
@@ -464,6 +513,7 @@ export default function PersonnelManagement() {
                 )}
               </TouchableOpacity>
             </View>
+            </>}
           </View>
         </View>
       </Modal>
