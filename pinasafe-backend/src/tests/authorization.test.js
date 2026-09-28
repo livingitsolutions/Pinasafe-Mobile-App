@@ -111,12 +111,24 @@ describe('Authorization boundary checks', () => {
     expect(response.status).toBe(403);
   });
 
-  test('constrains emergency updates by report id and organization id', async () => {
+  test('constrains emergency updates by report id, organization id, assigned team, and expected status', async () => {
     const reportId = '123e4567-e89b-12d3-a456-426614174015';
+    const teamId = '123e4567-e89b-12d3-a456-426614174016';
     const reportQuery = buildQuery({
-      data: { id: reportId, organization_id: 'org-1' },
+      data: {
+        id: reportId,
+        organization_id: 'org-1',
+        assigned_team_id: teamId,
+        status: 'dispatched',
+        responder_id: null
+      },
       error: null
     });
+    const teamQuery = buildQuery({
+      data: { id: teamId, organization_id: 'org-1', team_leader_id: 'responder-1' },
+      error: null
+    });
+    const membershipQuery = buildQuery({ data: null, error: null });
     const updateQuery = buildQuery({
       data: { id: reportId, organization_id: 'org-1', status: 'responding' },
       error: null
@@ -124,6 +136,8 @@ describe('Authorization boundary checks', () => {
     const mockSupabase = {
       from: jest.fn()
         .mockReturnValueOnce(reportQuery)
+        .mockReturnValueOnce(teamQuery)
+        .mockReturnValueOnce(membershipQuery)
         .mockReturnValueOnce(updateQuery)
     };
     getClient.mockReturnValue(mockSupabase);
@@ -143,6 +157,8 @@ describe('Authorization boundary checks', () => {
     expect(response.status).toBe(200);
     expect(updateQuery.eq).toHaveBeenCalledWith('id', reportId);
     expect(updateQuery.eq).toHaveBeenCalledWith('organization_id', 'org-1');
+    expect(updateQuery.eq).toHaveBeenCalledWith('assigned_team_id', teamId);
+    expect(updateQuery.eq).toHaveBeenCalledWith('status', 'dispatched');
   });
 
   test('denies citizen access to another user personnel record', async () => {

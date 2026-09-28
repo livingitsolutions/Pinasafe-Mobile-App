@@ -272,21 +272,26 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
   }
 });
 
-router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), validateUUID('id'), validateEmergencyStatusUpdate, async (req, res) => {
+// Operational transitions allowed through PUT /:id, keyed by current status.
+const OPERATIONAL_TRANSITIONS = {
+  dispatched: 'responding',
+  responding: 'resolved'
+};
+
+router.put('/:id', authenticateToken, requireRole(['responder']), validateUUID('id'), validateEmergencyStatusUpdate, async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes } = req.body;
     const { user } = req;
     const supabase = getClient();
 
-    const validStatuses = ['pending', 'dispatched', 'responding', 'resolved'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
     }
 
     const { data: existingReport, error: fetchError } = await supabase
       .from('emergency_reports')
-      .select('id, organization_id')
+      .select('id, organization_id, assigned_team_id, status, responder_id')
       .eq('id', id)
       .maybeSingle();
 
@@ -294,22 +299,54 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
       return res.status(404).json({ error: 'Emergency report not found' });
     }
 
-    if (!user.organization_id) {
-      return res.status(400).json({ error: 'User not assigned to an organization' });
+    if (!existingReport.assigned_team_id) {
+      return res.status(404).json({ error: 'Emergency report has no assigned team' });
     }
 
     if (!canAccessOrganization(user, existingReport.organization_id)) {
       return res.status(403).json({ error: 'Access denied for this organization' });
     }
 
+    const { data: team, error: teamError } = await supabase
+      .from('rescue_teams')
+      .select('id, organization_id, team_leader_id')
+      .eq('id', existingReport.assigned_team_id)
+      .maybeSingle();
+
+    if (teamError || !team || !canAccessOrganization(user, team.organization_id)) {
+      return res.status(403).json({ error: 'Assigned team is not in your organization' });
+    }
+
+    const { data: membership } = await supabase
+      .from('team_members')
+      .select('id')
+      .eq('team_id', existingReport.assigned_team_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const isAuthorized = Boolean(membership) || team.team_leader_id === user.id;
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: 'You are not a member of the assigned team' });
+    }
+
+    const expectedPreviousStatus = existingReport.status;
+    if (OPERATIONAL_TRANSITIONS[expectedPreviousStatus] !== status) {
+      return res.status(409).json({ error: `Invalid status transition from ${expectedPreviousStatus} to ${status}` });
+    }
+
     const updateData = {
       status,
-      responder_id: req.user.id,
       notes: notes ?? null,
       updated_at: new Date().toISOString()
     };
 
-    if (status === 'resolved') {
+    if (expectedPreviousStatus === 'dispatched') {
+      updateData.responder_id = user.id;
+    } else {
+      if (!existingReport.responder_id) {
+        return res.status(409).json({ error: 'Report has no assigned responder to resolve' });
+      }
       updateData.resolved_at = new Date().toISOString();
     }
 
@@ -318,11 +355,13 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
       .update(updateData)
       .eq('id', id)
       .eq('organization_id', user.organization_id)
+      .eq('assigned_team_id', existingReport.assigned_team_id)
+      .eq('status', expectedPreviousStatus)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error || !updatedReport) {
-      return res.status(404).json({ error: 'Emergency report not found' });
+      return res.status(409).json({ error: 'Emergency report state changed; please retry' });
     }
 
     if (updatedReport.cluster_id) {
@@ -349,22 +388,40 @@ router.put('/:id', authenticateToken, requireRole(['responder', 'admin']), valid
   }
 });
 
-// Assign team to emergency report
-router.post('/:id/assign-team', authenticateToken, requireRole(['admin', 'responder']), validateUUID('id'), validateTeamAssignment, async (req, res) => {
+// Assign team to emergency report (admin only, pending reports only)
+router.post('/:id/assign-team', authenticateToken, requireRole(['admin']), validateUUID('id'), validateTeamAssignment, async (req, res) => {
   try {
     const { id } = req.params;
     const { teamId } = req.body;
     const { user } = req;
     const supabase = getClient();
 
-    if (!teamId) {
-      return res.status(400).json({ error: 'Team ID is required' });
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
     }
 
-    // Verify the team exists and belongs to user's organization
+    const { data: existingReport, error: fetchError } = await supabase
+      .from('emergency_reports')
+      .select('id, organization_id, status')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchError || !existingReport) {
+      return res.status(404).json({ error: 'Emergency report not found' });
+    }
+
+    if (!canAccessOrganization(user, existingReport.organization_id)) {
+      return res.status(403).json({ error: 'Access denied for this organization' });
+    }
+
+    if (existingReport.status !== 'pending') {
+      return res.status(409).json({ error: 'Emergency report is not pending assignment' });
+    }
+
+    // Verify the team exists, is active, and belongs to the admin's organization
     const { data: team, error: teamError } = await supabase
       .from('rescue_teams')
-      .select('*')
+      .select('id')
       .eq('id', teamId)
       .eq('organization_id', user.organization_id)
       .eq('is_active', true)
@@ -374,7 +431,6 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin', 'respon
       return res.status(404).json({ error: 'Team not found or not in your organization' });
     }
 
-    // Update the report with team assignment and change status to dispatched
     const { data: updatedReport, error } = await supabase
       .from('emergency_reports')
       .update({
@@ -386,17 +442,18 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin', 'respon
       })
       .eq('id', id)
       .eq('organization_id', user.organization_id)
+      .eq('status', 'pending')
       .select(`
         *,
         reporter:users!reported_by(name, phone),
         responder:users!responder_id(name),
         assigned_team:rescue_teams(id, name, team_leader:users!team_leader_id(id, name))
       `)
-      .single();
+      .maybeSingle();
 
     if (error || !updatedReport) {
       safeLogger.error('emergency.team_assignment_failed');
-      return res.status(404).json({ error: 'Emergency report not found' });
+      return res.status(409).json({ error: 'Emergency report is no longer pending assignment' });
     }
 
     res.json({
