@@ -1021,6 +1021,11 @@ export interface EmergencyReport {
   useAIClassification?: boolean;
   dispatches?: AlertDispatch[];
   assigned_team_id?: string;
+  assigned_team?: {
+    id: string;
+    name: string;
+    team_leader?: { id: string; name: string };
+  };
 }
 export interface Alert {
   id: string;
@@ -1037,6 +1042,7 @@ export interface Alert {
 
 interface EmergencyContextType {
   reports: EmergencyReport[];
+  refreshReports: () => Promise<void>;
   clusteredIncidents: ClusteredIncident[];
   submitReport: (report: Omit<EmergencyReport, 'id' | 'reportedAt' | 'status'>) => Promise<string>;
   updateReportStatus: (reportId: string, status: EmergencyReport['status'], notes?: string) => Promise<void>;
@@ -1380,6 +1386,7 @@ export function EmergencyProvider({ children }: { children: React.ReactNode }) {
 
   const value: EmergencyContextType = {
     reports,
+    refreshReports: loadReports,
     clusteredIncidents,
     submitReport,
     updateReportStatus,
@@ -1402,6 +1409,7 @@ export function useEmergency() {
   if (!context) {
     return {
       reports: [],
+      refreshReports: async () => {},
       clusteredIncidents: [],
       submitReport: async () => '',
       updateReportStatus: async () => {},

@@ -314,7 +314,16 @@ class APIService {
     });
   }
 
-  async assignTeamToReport(reportId: string, teamId: string): Promise<APIResponse<any>> {
+  async assignTeamToReport(reportId: string, teamId: string): Promise<APIResponse<{
+    message: string;
+    data: {
+      id: string;
+      status: 'dispatched';
+      assigned_team_id: string;
+      assigned_team?: { id: string; name: string };
+      [key: string]: unknown;
+    };
+  }>> {
     return this.request(`/emergency-reports/${reportId}/assign-team`, {
       method: 'POST',
       body: JSON.stringify({ teamId }),

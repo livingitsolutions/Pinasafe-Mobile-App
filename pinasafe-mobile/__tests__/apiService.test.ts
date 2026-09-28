@@ -100,6 +100,22 @@ describe('apiService (F2 foundation)', () => {
     expect(sessionExpired).not.toHaveBeenCalled();
   });
 
+  test('assign-team uses the dedicated endpoint and exact backend body', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, {
+      message: 'Team assigned successfully',
+      data: { id: 'report-1', status: 'dispatched', assigned_team_id: 'team-1' },
+    }));
+
+    const response = await apiService.assignTeamToReport('report-1', 'team-1');
+
+    expect(response.data?.data.status).toBe('dispatched');
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/emergency-reports/report-1/assign-team'),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ teamId: 'team-1' }) })
+    );
+  });
+
   test('F. a 401 from login does not clear an unrelated session or recurse', async () => {
     apiService.setToken('someone-elses-token');
     const sessionExpired = jest.fn();
