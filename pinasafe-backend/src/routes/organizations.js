@@ -214,6 +214,8 @@ router.get('/:id/personnel', authenticateToken, requireRole(['admin', 'responder
       return res.status(403).json({ error: 'Access denied for this organization' });
     }
 
+    const supabase = getClient();
+
     const { data: personnel, error } = await supabase
       .from('personnel')
       .select('*')
