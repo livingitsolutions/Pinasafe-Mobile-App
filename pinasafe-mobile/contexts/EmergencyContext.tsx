@@ -1015,6 +1015,10 @@ export interface EmergencyReport {
   reportedAt: string;
   responderId?: string;
   resolvedAt?: string;
+  responder_id?: string;
+  resolved_at?: string;
+  updated_at?: string;
+  created_at: string;
   notes?: string;
   evidence?: EmergencyEvidence;
   aiClassification?: ClassificationResult;

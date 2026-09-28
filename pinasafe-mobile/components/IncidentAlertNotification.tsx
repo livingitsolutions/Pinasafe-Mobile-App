@@ -86,7 +86,7 @@ export const IncidentAlertNotification: React.FC = () => {
       }
 
       const reportsResponse = await apiService.getEmergencyReports({ organizationId: user?.organizationId });
-      const activeReports = reportsResponse.data?.data || reportsResponse.data || [];
+      const activeReports = reportsResponse.data?.data || [];
 
       const busyTeamIds = new Set(
         activeReports

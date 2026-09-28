@@ -38,7 +38,7 @@ function ForgotPasswordScreen(): JSX.Element {
             Check Your Email
           </Text>
           <Text className="text-gray-600 text-center mb-8 leading-6">
-            We've sent a password reset link to{'\n'}
+            We&apos;ve sent a password reset link to{'\n'}
             <Text className="font-semibold">{email}</Text>
           </Text>
           <TouchableOpacity
@@ -71,7 +71,7 @@ function ForgotPasswordScreen(): JSX.Element {
             </View>
             <Text className="text-2xl font-bold text-gray-900 mb-2">Forgot Password?</Text>
             <Text className="text-gray-600 text-center">
-              Enter your email address and we'll send you a link to reset your password.
+              Enter your email address and we&apos;ll send you a link to reset your password.
             </Text>
           </View>
 

@@ -65,7 +65,7 @@ export default function AdminClusterManagement() {
         {statistics ? (
           <>
             <View className="mx-6 mt-6">
-              <Text className="text-lg font-bold text-gray-900 mb-3">Today's Overview</Text>
+              <Text className="text-lg font-bold text-gray-900 mb-3">Today&apos;s Overview</Text>
               <View className="flex-row flex-wrap justify-between">
                 <View className="w-[48%] bg-white rounded-xl p-4 shadow-sm border border-gray-100 mb-3">
                   <View className="flex-row items-center justify-between mb-2">

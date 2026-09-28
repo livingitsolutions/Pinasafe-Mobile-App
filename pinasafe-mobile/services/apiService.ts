@@ -86,6 +86,17 @@ export type EvidenceUploadResult =
   | EvidenceClassification
   | { accepted: true; evidenceId: string; classification: EvidenceClassification };
 
+export interface ReportEvidence {
+  id: string;
+  mimeType: 'image/jpeg';
+  byteSize: number;
+  width: number;
+  height: number;
+  createdAt: string;
+  url: string;
+  expiresIn: number;
+}
+
 class APIService {
   private token: string | null = null;
   private sessionExpiredListener: SessionExpiredListener | null = null;
@@ -338,9 +349,13 @@ class APIService {
     });
   }
 
-  async getEmergencyReports(filters: any = {}): Promise<APIResponse<any[]>> {
+  async getEmergencyReports(filters: any = {}): Promise<APIResponse<{ data: any[] }>> {
     const params = new URLSearchParams(filters);
     return this.request(`/emergency-reports?${params}`);
+  }
+
+  async getReportEvidence(reportId: string): Promise<APIResponse<{ data: ReportEvidence[] }>> {
+    return this.request(`/evidence/reports/${reportId}`);
   }
 
   async updateEmergencyReportStatus(
@@ -559,12 +574,12 @@ class APIService {
   }
 
   // Organization methods
-  async getOrganizationReadiness(): Promise<APIResponse<any[]>> {
+  async getOrganizationReadiness(): Promise<APIResponse<{ data: any[] }>> {
     return this.request('/organizations/readiness');
   }
 
   // Team management methods
-  async getTeams(): Promise<APIResponse<any[]>> {
+  async getTeams(): Promise<APIResponse<{ data: any[] }>> {
     return this.request('/teams');
   }
 

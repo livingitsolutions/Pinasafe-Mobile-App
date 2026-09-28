@@ -35,7 +35,7 @@ function ResponderHistory() {
   const stats = useMemo(() => {
     const now = new Date();
     const thisMonth = resolvedIncidents.filter(incident => {
-      const date = new Date(incident.resolved_at || incident.updated_at);
+      const date = new Date(incident.resolved_at || incident.updated_at || incident.created_at);
       return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
     });
 
@@ -159,7 +159,7 @@ function ResponderHistory() {
                       <View className="flex-row items-center">
                         <Calendar size={14} color="#6B7280" strokeWidth={1.5} />
                         <Text className="ml-2 text-sm text-gray-600">
-                          {formatDate(incident.resolved_at || incident.updated_at)} at {formatTime(incident.resolved_at || incident.updated_at)}
+                          {formatDate(incident.resolved_at || incident.updated_at || incident.created_at)} at {formatTime(incident.resolved_at || incident.updated_at || incident.created_at)}
                         </Text>
                       </View>
                       <View className="flex-row items-center">
