@@ -4,7 +4,10 @@
  * no production/external systems are contacted.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { apiService, ApiError, isApiError } from '../services/apiService';
+
+jest.mock('react-native', () => ({ Platform: { OS: 'web' } }));
 
 const jsonResponse = (status: number, body: unknown): Response =>
   ({
@@ -21,6 +24,7 @@ describe('apiService (F2 foundation)', () => {
     AsyncStorage.__resetMockStorage?.();
     await apiService.clearLocalSession();
     apiService.onSessionExpired(null);
+    (Platform as { OS: string }).OS = 'web';
   });
 
   test('A. successful request resolves normally with data', async () => {
@@ -140,6 +144,16 @@ describe('apiService (F2 foundation)', () => {
     expect(apiService.isAuthenticated()).toBe(true);
   });
 
+  test('restores an AsyncStorage token in a native runtime', async () => {
+    (Platform as { OS: string }).OS = 'ios';
+    await AsyncStorage.setItem('auth_token', 'native-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { user: { id: '1' } }));
+
+    await apiService.getProfile();
+
+    expect(apiService.getToken()).toBe('native-token');
+  });
+
   test('M. login response passes mustChangePassword through unchanged', async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(
       jsonResponse(200, {
@@ -152,5 +166,24 @@ describe('apiService (F2 foundation)', () => {
     const result = await apiService.login('a@b.com', 'pw');
 
     expect(result.data?.mustChangePassword).toBe(true);
+  });
+
+  test('creates an evidence session using the backend contract', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: { id: 'session', status: 'active', expiresAt: 'soon' } }));
+    const result = await apiService.createEvidenceSession();
+    expect(result.data?.data.id).toBe('session');
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/evidence/sessions'), expect.objectContaining({ method: 'POST', body: '{}' }));
+  });
+
+  test('uploads JPEG evidence as the image multipart field and uses server classification', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { data: { accepted: false, label: 'other', confidence: 0.2, status: 'valid', action: 'reject', reason: 'Not an incident', caption: null } }));
+    const result = await apiService.uploadEvidenceImage('session-id', { uri: 'local-test-uri' });
+    expect(result.data?.data.accepted).toBe(false);
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.method).toBe('POST');
+    expect(request.body).toBeInstanceOf(FormData);
+    expect(request.headers).toEqual({});
   });
 });

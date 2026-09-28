@@ -1,6 +1,7 @@
 
 import { apiService } from './apiService';
 import { audioAlertService } from './AudioAlertService';
+import { isClientRuntime } from '@/utils/clientRuntime';
 
 export interface Organization {
   id: string;
@@ -56,13 +57,15 @@ const emergencyOrganizationMapping: Record<string, string[]> = {
   other: ['drrmo-hilongos','bfp-hilongos'],
 };
 
-class OrganizationAlertService {
+export class OrganizationAlertService {
   private organizations: Organization[] = [];
   private activeDispatches: AlertDispatch[] = [];
   private isInitialized = false;
 
   constructor() {
-    this.initializeOrganizations();
+    if (isClientRuntime()) {
+      void this.initializeOrganizations();
+    }
   }
 
   // Load organizations from database

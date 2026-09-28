@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isClientRuntime } from '@/utils/clientRuntime';
 
 interface APIResponse<T = any> {
   data?: T;
@@ -44,7 +45,7 @@ interface LoginResponse {
   mustChangePassword?: boolean;
 }
 
-interface EmergencyReportData {
+export interface EmergencyReportData {
   type: 'road' | 'fire';
   description: string;
   location: string;
@@ -57,7 +58,28 @@ interface EmergencyReportData {
   };
   aiClassification?: any;
   useAIClassification?: boolean;
+  uploadSessionId?: string;
 }
+
+export interface EvidenceClassification {
+  accepted: boolean;
+  label: 'fire' | 'road' | 'other';
+  confidence: number | null;
+  status: 'valid' | 'invalid';
+  action: 'accept' | 'reject' | 'uncertain';
+  reason: string | null;
+  caption: string | null;
+}
+
+export interface EvidenceUploadSession {
+  id: string;
+  status: 'active' | 'bound';
+  expiresAt: string;
+}
+
+export type EvidenceUploadResult =
+  | EvidenceClassification
+  | { accepted: true; evidenceId: string; classification: EvidenceClassification };
 
 class APIService {
   private baseURL: string;
@@ -98,7 +120,7 @@ class APIService {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<APIResponse<T>> {
-    if (!this.token) {
+    if (!this.token && isClientRuntime()) {
       const storedToken = await AsyncStorage.getItem('auth_token');
       if (storedToken) this.token = storedToken;
     }
@@ -251,6 +273,28 @@ class APIService {
     return this.request('/emergency-reports', {
       method: 'POST',
       body: JSON.stringify(reportData),
+    });
+  }
+
+  async createEvidenceSession(): Promise<APIResponse<{ data: EvidenceUploadSession }>> {
+    return this.request('/evidence/sessions', { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async uploadEvidenceImage(
+    sessionId: string,
+    image: { uri: string; name?: string; type?: string }
+  ): Promise<APIResponse<{ data: EvidenceUploadResult }>> {
+    const formData = new FormData();
+    formData.append('image', {
+      uri: image.uri,
+      name: image.name || 'evidence.jpg',
+      type: image.type || 'image/jpeg',
+    } as unknown as Blob);
+
+    return this.request(`/evidence/sessions/${sessionId}/image`, {
+      method: 'POST',
+      headers: {},
+      body: formData,
     });
   }
 
