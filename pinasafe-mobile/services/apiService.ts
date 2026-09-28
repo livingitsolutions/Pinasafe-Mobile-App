@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isClientRuntime } from '@/utils/clientRuntime';
+import { Platform } from 'react-native';
 
 interface APIResponse<T = any> {
   data?: T;
@@ -285,11 +286,33 @@ class APIService {
     image: { uri: string; name?: string; type?: string }
   ): Promise<APIResponse<{ data: EvidenceUploadResult }>> {
     const formData = new FormData();
-    formData.append('image', {
-      uri: image.uri,
-      name: image.name || 'evidence.jpg',
-      type: image.type || 'image/jpeg',
-    } as unknown as Blob);
+    const name = image.name || 'evidence.jpg';
+    const type = image.type || 'image/jpeg';
+
+    if (Platform.OS === 'web') {
+      if (!isClientRuntime()) {
+        throw new Error('Evidence upload is unavailable outside the browser.');
+      }
+
+      const imageResponse = await fetch(image.uri);
+      if (!imageResponse.ok) {
+        throw new Error('Unable to prepare evidence image for upload.');
+      }
+
+      const sourceBlob = await imageResponse.blob();
+      const uploadBlob =
+        sourceBlob.type === type
+          ? sourceBlob
+          : new Blob([sourceBlob], { type });
+
+      formData.append('image', uploadBlob, name);
+    } else {
+      formData.append('image', {
+        uri: image.uri,
+        name,
+        type,
+      } as unknown as Blob);
+    }
 
     return this.request(`/evidence/sessions/${sessionId}/image`, {
       method: 'POST',

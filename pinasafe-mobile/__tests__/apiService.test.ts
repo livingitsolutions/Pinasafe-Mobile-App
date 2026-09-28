@@ -25,6 +25,7 @@ describe('apiService (F2 foundation)', () => {
     await apiService.clearLocalSession();
     apiService.onSessionExpired(null);
     (Platform as { OS: string }).OS = 'web';
+    delete (global as any).window;
   });
 
   test('A. successful request resolves normally with data', async () => {
@@ -116,6 +117,108 @@ describe('apiService (F2 foundation)', () => {
     );
   });
 
+  test('web evidence upload sends actual JPEG Blob bytes with the expected filename', async () => {
+    apiService.setToken('valid-token');
+    (global as any).window = {};
+
+    const jpegBlob = new Blob(['jpeg-binary'], { type: 'image/jpeg' });
+    const uriResponse = {
+      ok: true,
+      blob: jest.fn().mockResolvedValue(jpegBlob),
+    };
+
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(uriResponse)
+      .mockResolvedValueOnce(jsonResponse(200, {
+        data: {
+          accepted: true,
+          classification: { label: 'fire', confidence: 0.99 },
+        },
+      }));
+
+    await apiService.uploadEvidenceImage('session-id', {
+      uri: 'blob:http://localhost/captured-image',
+    });
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      'blob:http://localhost/captured-image'
+    );
+
+    const [, request] = (global.fetch as jest.Mock).mock.calls[1];
+    expect(request.method).toBe('POST');
+    expect(request.headers).toEqual({});
+    expect(request.body).toBeInstanceOf(FormData);
+
+    const uploadedImage = request.body.get('image');
+    expect(uploadedImage).toBeInstanceOf(Blob);
+    expect(uploadedImage.type).toBe('image/jpeg');
+    expect((uploadedImage as File).name).toBe('evidence.jpg');
+
+    expect((global.fetch as jest.Mock).mock.calls[1][0]).toContain(
+      '/api/evidence/sessions/session-id/image'
+    );
+  });
+
+  test('native evidence upload preserves the React Native multipart URI object without browser conversion', async () => {
+    apiService.setToken('valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+
+    const appendSpy = jest.spyOn(FormData.prototype, 'append');
+
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, {
+      data: {
+        accepted: true,
+        classification: { label: 'fire', confidence: 0.99 },
+      },
+    }));
+
+    await apiService.uploadEvidenceImage('session-id', {
+      uri: 'file:///camera/evidence.jpg',
+      name: 'capture.jpg',
+      type: 'image/jpeg',
+    });
+
+    expect(appendSpy).toHaveBeenCalledWith('image', {
+      uri: 'file:///camera/evidence.jpg',
+      name: 'capture.jpg',
+      type: 'image/jpeg',
+    });
+
+    // Native performs only the API request. A browser implementation would
+    // first fetch the local URI to obtain a Blob.
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    const [url, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toContain('/api/evidence/sessions/session-id/image');
+    expect(request.method).toBe('POST');
+    expect(request.headers).toEqual({});
+    expect(request.body).toBeInstanceOf(FormData);
+
+    appendSpy.mockRestore();
+  });
+
+  test('web evidence conversion failure prevents the API upload request', async () => {
+    apiService.setToken('valid-token');
+    (global as any).window = {};
+
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    });
+
+    await expect(
+      apiService.uploadEvidenceImage('session-id', {
+        uri: 'blob:http://localhost/missing-image',
+      })
+    ).rejects.toThrow('Unable to prepare evidence image for upload.');
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'blob:http://localhost/missing-image'
+    );
+  });
+
   test('F. a 401 from login does not clear an unrelated session or recurse', async () => {
     apiService.setToken('someone-elses-token');
     const sessionExpired = jest.fn();
@@ -194,6 +297,7 @@ describe('apiService (F2 foundation)', () => {
 
   test('uploads JPEG evidence as the image multipart field and uses server classification', async () => {
     apiService.setToken('valid-token');
+    (Platform as { OS: string }).OS = 'ios';
     (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { data: { accepted: false, label: 'other', confidence: 0.2, status: 'valid', action: 'reject', reason: 'Not an incident', caption: null } }));
     const result = await apiService.uploadEvidenceImage('session-id', { uri: 'local-test-uri' });
     expect(result.data?.data.accepted).toBe(false);
