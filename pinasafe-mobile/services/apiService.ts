@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isClientRuntime } from '@/utils/clientRuntime';
+import { Platform } from 'react-native';
 
 interface APIResponse<T = any> {
   data?: T;
@@ -82,16 +83,19 @@ export type EvidenceUploadResult =
   | { accepted: true; evidenceId: string; classification: EvidenceClassification };
 
 class APIService {
-  private baseURL: string;
   private token: string | null = null;
   private sessionExpiredListener: SessionExpiredListener | null = null;
 
-  constructor() {
-    // Use environment variable or default to localhost for development
-    this.baseURL = process.env.EXPO_PUBLIC_API_URL || 'https://pinasafe-backend.onrender.com';
-    // this.baseURL = process.env.EXPO_PUBLIC_API_URL || 'https://sinister-cauldron-q79q59r7446jfxpqq-3000.app.github.dev';
-    
-    
+  private getBaseURL(): string {
+    const configuredURL = process.env.EXPO_PUBLIC_API_URL?.trim();
+
+    if (!configuredURL) {
+      throw new Error(
+        'PinaSafe API is not configured. Set EXPO_PUBLIC_API_URL.'
+      );
+    }
+
+    return configuredURL.replace(/\/$/, '');
   }
 
   // private async initializeToken() {
@@ -125,7 +129,7 @@ class APIService {
       if (storedToken) this.token = storedToken;
     }
     const hadToken = Boolean(this.token);
-    const url = `${this.baseURL}/api${endpoint}`;
+    const url = `${this.getBaseURL()}/api${endpoint}`;
 
     const config: RequestInit = {
       headers: {
@@ -285,11 +289,33 @@ class APIService {
     image: { uri: string; name?: string; type?: string }
   ): Promise<APIResponse<{ data: EvidenceUploadResult }>> {
     const formData = new FormData();
-    formData.append('image', {
-      uri: image.uri,
-      name: image.name || 'evidence.jpg',
-      type: image.type || 'image/jpeg',
-    } as unknown as Blob);
+    const name = image.name || 'evidence.jpg';
+    const type = image.type || 'image/jpeg';
+
+    if (Platform.OS === 'web') {
+      if (!isClientRuntime()) {
+        throw new Error('Evidence upload is unavailable outside the browser.');
+      }
+
+      const imageResponse = await fetch(image.uri);
+      if (!imageResponse.ok) {
+        throw new Error('Unable to prepare evidence image for upload.');
+      }
+
+      const sourceBlob = await imageResponse.blob();
+      const uploadBlob =
+        sourceBlob.type === type
+          ? sourceBlob
+          : new Blob([sourceBlob], { type });
+
+      formData.append('image', uploadBlob, name);
+    } else {
+      formData.append('image', {
+        uri: image.uri,
+        name,
+        type,
+      } as unknown as Blob);
+    }
 
     return this.request(`/evidence/sessions/${sessionId}/image`, {
       method: 'POST',
@@ -314,7 +340,16 @@ class APIService {
     });
   }
 
-  async assignTeamToReport(reportId: string, teamId: string): Promise<APIResponse<any>> {
+  async assignTeamToReport(reportId: string, teamId: string): Promise<APIResponse<{
+    message: string;
+    data: {
+      id: string;
+      status: 'dispatched';
+      assigned_team_id: string;
+      assigned_team?: { id: string; name: string };
+      [key: string]: unknown;
+    };
+  }>> {
     return this.request(`/emergency-reports/${reportId}/assign-team`, {
       method: 'POST',
       body: JSON.stringify({ teamId }),

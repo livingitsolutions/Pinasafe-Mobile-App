@@ -1,14 +1,15 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, TextInput, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Clock, MapPin, User, Plus, TriangleAlert as AlertTriangle, Layers, Send, X, Users } from 'lucide-react-native';
+import { Clock, MapPin, User, TriangleAlert as AlertTriangle, Layers, Send, X, Users } from 'lucide-react-native';
 import { useEmergency } from '@/contexts/EmergencyContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/apiService';
 import teamService from '@/services/teamService';
+import { acquireDispatchLock, getDispatchErrorMessage } from '@/utils/adminDispatch';
 
 const AdminIncidents: React.FC = () => {
-   const { reports, updateReportStatus } = useEmergency();
+  const { reports, refreshReports } = useEmergency();
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [showClusterModal, setShowClusterModal] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState<any>(null);
@@ -16,10 +17,12 @@ const AdminIncidents: React.FC = () => {
   const [updateMessage, setUpdateMessage] = useState('');
   const [updateStatus, setUpdateStatus] = useState('responding');
   const [loading, setLoading] = useState(false);
-  const [clusters, setClusters] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showTeamModal, setShowTeamModal] = useState(false);
   const [selectedIncident, setSelectedIncident] = useState<any>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [dispatching, setDispatching] = useState(false);
+  const dispatchLock = useRef(false);
   const [availableTeams, setAvailableTeams] = useState<any[]>([]);
   const { user , authToken } = useAuth();
 
@@ -30,7 +33,7 @@ const AdminIncidents: React.FC = () => {
     if (user?.organizationId) {
       loadTeams();
     }
-  }, [user]);
+  }, [user, authToken]);
 
   const loadClusters = async () => {
     try {
@@ -54,18 +57,28 @@ const AdminIncidents: React.FC = () => {
     }
   };
 
-  const assignTeamToIncident = async (teamId: string) => {
-    if (!selectedIncident) return;
+  const assignTeamToIncident = async () => {
+    if (!selectedIncident || !selectedTeamId) {
+      Alert.alert('Team required', 'Select an active team before dispatching this incident.');
+      return;
+    }
+    if (!acquireDispatchLock(dispatchLock)) return;
 
+    setDispatching(true);
     try {
-      await apiService.assignTeamToReport(selectedIncident.id, teamId);
-      Alert.alert('Success', 'Team assigned successfully');
+      await apiService.assignTeamToReport(selectedIncident.id, selectedTeamId);
+      await refreshReports();
       setShowTeamModal(false);
       setSelectedIncident(null);
-      loadClusters();
+      setSelectedTeamId(null);
+      Alert.alert('Dispatched', 'The incident was dispatched to the selected team.');
     } catch (error) {
       console.error('Error assigning team:', error);
-      Alert.alert('Error', 'Failed to assign team');
+      Alert.alert('Dispatch failed', getDispatchErrorMessage(error));
+      if ((error as { status?: number })?.status === 409) await refreshReports();
+    } finally {
+      dispatchLock.current = false;
+      setDispatching(false);
     }
   };
 
@@ -269,25 +282,11 @@ const AdminIncidents: React.FC = () => {
                       <Clock size={14} color="#6B7280" strokeWidth={1.5} />
                       <Text className="ml-2 text-sm text-gray-600">{getTimeAgo(incident.reportedAt)}</Text>
                     </View>
-                    <TouchableOpacity
-                      onPress={() => {
-                        Alert.alert(
-                          'Update Status',
-                          'Change incident status:',
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Dispatch', onPress: () => updateReportStatus(incident.id, 'dispatched') },
-                            { text: 'Responding', onPress: () => updateReportStatus(incident.id, 'responding') },
-                            { text: 'Resolve', onPress: () => updateReportStatus(incident.id, 'resolved') },
-                          ]
-                        );
-                      }}
-                      className="bg-purple-100 px-3 py-1 rounded-full"
-                    >
+                    <View className="bg-purple-100 px-3 py-1 rounded-full">
                       <Text className="text-sm text-purple-600 font-medium">
                         {incident.status}
                       </Text>
-                    </TouchableOpacity>
+                    </View>
                   </View>
 
                   {incident.assigned_team_id && (
@@ -306,6 +305,7 @@ const AdminIncidents: React.FC = () => {
                     <TouchableOpacity
                       onPress={() => {
                         setSelectedIncident(incident);
+                        setSelectedTeamId(null);
                         setShowTeamModal(true);
                       }}
                       className="mt-3 bg-blue-600 py-2 rounded-lg flex-row items-center justify-center"
@@ -456,7 +456,10 @@ const AdminIncidents: React.FC = () => {
           <View className="bg-white rounded-t-3xl p-6 max-h-[80%]">
             <View className="flex-row items-center justify-between mb-4">
               <Text className="text-xl font-bold text-gray-900">Assign Team</Text>
-              <TouchableOpacity onPress={() => setShowTeamModal(false)}>
+              <TouchableOpacity disabled={dispatching} onPress={() => {
+                setShowTeamModal(false);
+                setSelectedTeamId(null);
+              }}>
                 <X size={24} color="#6B7280" strokeWidth={2} />
               </TouchableOpacity>
             </View>
@@ -470,12 +473,14 @@ const AdminIncidents: React.FC = () => {
                 availableTeams.map((team) => (
                   <TouchableOpacity
                     key={team.id}
-                    onPress={() => assignTeamToIncident(team.id)}
-                    className="bg-gray-50 p-4 rounded-xl mb-3 border border-gray-200"
+                    disabled={!team.is_active || dispatching}
+                    onPress={() => setSelectedTeamId(team.id)}
+                    className={`p-4 rounded-xl mb-3 border ${selectedTeamId === team.id ? 'bg-blue-50 border-blue-500' : 'bg-gray-50 border-gray-200'} ${!team.is_active ? 'opacity-50' : ''}`}
                   >
                     <View className="flex-row items-center justify-between">
                       <View className="flex-1">
                         <Text className="font-semibold text-gray-900">{team.name}</Text>
+                        {!team.is_active && <Text className="text-xs text-red-600 mt-1">Inactive — unavailable</Text>}
                         {team.team_leader && (
                           <Text className="text-sm text-gray-600 mt-1">
                             Leader: {team.team_leader.name}
@@ -495,6 +500,16 @@ const AdminIncidents: React.FC = () => {
                 </Text>
               )}
             </ScrollView>
+            <TouchableOpacity
+              testID="dispatch-selected-team"
+              onPress={assignTeamToIncident}
+              disabled={!selectedTeamId || dispatching}
+              className={`mt-4 py-3 rounded-xl items-center ${selectedTeamId && !dispatching ? 'bg-blue-600' : 'bg-gray-300'}`}
+            >
+              {dispatching ? <ActivityIndicator color="#FFFFFF" /> : (
+                <Text className="text-white font-semibold">Dispatch selected team</Text>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
