@@ -1,4 +1,5 @@
 import { useAuth } from '@/contexts/AuthContext';
+import { resolveRoleRoute } from '@/utils/roleRouting';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Redirect, router } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -57,18 +58,11 @@ export default function Index() {
 
   // Redirect based on authentication status
   if (isAuthenticated) {
-    // Redirect to role-specific tabs
-    if (user?.role === 'admin') {
-      
-      return <Redirect href="/(tabs-admin)/dashboard" />;
-    } else if (user?.role === 'responder') {
-     
-      return <Redirect href="/(tabs-responder)/dispatch" />;
-    } else {
-     
-      return <Redirect href="/(tabs-citizen)/emergency-main" />;
-      
-    }
+    // F2 decision: super_admin has no dedicated UI yet. The admin shell only
+    // calls organization-scoped endpoints that fail safely (400/empty state)
+    // for an org-less account, so it is safer than exposing citizen
+    // functionality (e.g. filing emergency reports) to a platform account.
+    return <Redirect href={resolveRoleRoute(user?.role) as any} />;
   } else {
     return <Redirect href="/(auth)/login" />;
   }

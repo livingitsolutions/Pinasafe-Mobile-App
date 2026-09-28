@@ -6,12 +6,36 @@ interface APIResponse<T = any> {
   message?: string;
 }
 
+// Thrown by request() for any non-2xx or network-level failure.
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+export const isApiError = (error: unknown): error is ApiError => error instanceof ApiError;
+
+type SessionExpiredListener = () => void;
+
+// Endpoints that are reachable without a valid session; a 401 here is a
+// credential/validation failure, not an expired session, even if a stale
+// token happens to be attached to the request.
+const PUBLIC_ENDPOINTS = new Set([
+  '/auth/login',
+  '/auth/register',
+  '/auth/personnel-invitations/accept',
+]);
+
 interface LoginResponse {
   user: {
     id: string;
     email: string;
     name: string;
-    role: 'citizen' | 'responder' | 'admin';
+    role: 'citizen' | 'responder' | 'admin' | 'super_admin';
     phone?: string;
     address?: string;
     verified: boolean;
@@ -21,7 +45,7 @@ interface LoginResponse {
 }
 
 interface EmergencyReportData {
-  type: 'rescue' | 'fire' ;
+  type: 'road' | 'fire';
   description: string;
   location: string;
   coordinates?: { latitude: number; longitude: number };
@@ -38,6 +62,7 @@ interface EmergencyReportData {
 class APIService {
   private baseURL: string;
   private token: string | null = null;
+  private sessionExpiredListener: SessionExpiredListener | null = null;
 
   constructor() {
     // Use environment variable or default to localhost for development
@@ -58,48 +83,71 @@ class APIService {
   //   }
   // }
 
+  // Registers a single callback invoked when an authenticated request is
+  // rejected as expired (401). Avoids a circular import with AuthContext.
+  onSessionExpired(listener: SessionExpiredListener | null) {
+    this.sessionExpiredListener = listener;
+  }
+
+  private async handleSessionExpired() {
+    await this.clearLocalSession();
+    this.sessionExpiredListener?.();
+  }
+
   private async request<T = any>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<APIResponse<T>> {
+    if (!this.token) {
+      const storedToken = await AsyncStorage.getItem('auth_token');
+      if (storedToken) this.token = storedToken;
+    }
+    const hadToken = Boolean(this.token);
+    const url = `${this.baseURL}/api${endpoint}`;
+
+    const config: RequestInit = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        ...options.headers,
+      },
+      ...options,
+    };
+
+    console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`);
+
+    let response: Response;
     try {
-        if (!this.token) {
-          const storedToken = await AsyncStorage.getItem('auth_token');
-          if (storedToken) this.token = storedToken;
-        }
-      const url = `${this.baseURL}/api${endpoint}`;
-
-      const config: RequestInit = {
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.token && { Authorization: `Bearer ${this.token}` }),
-          ...options.headers,
-        },
-        ...options,
-      };
-
-      console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`);
-
-      const response = await fetch(url, config);
-      const responseText = await response.text();
-      let data: any;
-      try {
-        data = responseText ? JSON.parse(responseText) : undefined;
-      } catch {
-        data = undefined;
-      }
-
-      if (!response.ok) {
-        console.error(`❌ API Error: ${response.status}`);
-        return { error: data?.message || `HTTP ${response.status}` };
-      }
-
-      console.log(`✅ API Success: ${options.method || 'GET'} ${endpoint}`);
-      return { data };
+      response = await fetch(url, config);
     } catch (error) {
       console.error('❌ Network Error:', error);
-      return { error: 'Network error. Please check your connection.' };
+      throw new ApiError(0, 'Network error. Please check your connection.');
     }
+
+    const responseText = await response.text();
+    let data: any;
+    try {
+      data = responseText ? JSON.parse(responseText) : undefined;
+    } catch {
+      data = undefined;
+    }
+
+    if (!response.ok) {
+      console.error(`❌ API Error: ${response.status}`);
+
+      if (response.status === 401 && hadToken && !PUBLIC_ENDPOINTS.has(endpoint)) {
+        await this.handleSessionExpired();
+      }
+
+      const safeMessage =
+        (typeof data?.error === 'string' && data.error) ||
+        (typeof data?.message === 'string' && data.message) ||
+        `Request failed with status ${response.status}`;
+      throw new ApiError(response.status, safeMessage);
+    }
+
+    console.log(`✅ API Success: ${options.method || 'GET'} ${endpoint}`);
+    return { data };
   }
 
   async get<T = any>(endpoint: string): Promise<APIResponse<T>> {

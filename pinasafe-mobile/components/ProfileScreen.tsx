@@ -63,6 +63,25 @@ const roleConfig = {
     stats: null,
     appVersion: 'Version 1.0.0 - Admin Panel',
   },
+  // F2: no dedicated super_admin UI yet; reuses the admin profile config
+  // rather than leaving the role unhandled (see app/index.tsx routing decision).
+  super_admin: {
+    title: 'Admin Profile',
+    subtitle: 'System administrator settings',
+    iconBg: 'bg-purple-100',
+    iconColor: '#7C3AED',
+    roleLabel: 'Administrator',
+    roleBg: 'bg-purple-100 text-purple-800',
+    menuItems: [
+      { id: 1, title: 'System Settings', icon: Settings, color: 'text-purple-600' },
+      { id: 2, title: 'User Management', icon: User, color: 'text-blue-600' },
+      { id: 3, title: 'Security Settings', icon: Shield, color: 'text-green-600' },
+      { id: 4, title: 'Notifications', icon: Bell, color: 'text-amber-600' },
+      { id: 5, title: 'Help & Support', icon: HelpCircle, color: 'text-gray-600' },
+    ],
+    stats: null,
+    appVersion: 'Version 1.0.0 - Admin Panel',
+  },
 };
 
 export default function ProfileScreen({ userRole }: ProfileScreenProps) {

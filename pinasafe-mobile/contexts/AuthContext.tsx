@@ -350,7 +350,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { apiService } from '@/services/apiService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export type UserRole = 'citizen' | 'responder' | 'admin';
+export type UserRole = 'citizen' | 'responder' | 'admin' | 'super_admin';
 
 export interface User {
   id: string;
@@ -423,6 +423,10 @@ const rolePermissions: Record<UserRole, string[]> = {
     'users.manage',
     'system.manage',
   ],
+  // Backend platform role. F2 deliberately grants no frontend operational
+  // permissions until dedicated super-admin capabilities are defined.
+  // Routing may reuse the admin shell, but authorization remains distinct.
+  super_admin: [],
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -447,7 +451,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
+    // A 401 on an authenticated request means the session expired server-side;
+    // apiService has no visibility into React state, so it notifies via this listener.
+    apiService.onSessionExpired(() => {
+      setAuthToken(null);
+      setUser(null);
+    });
     initializeAuth();
+
+    return () => apiService.onSessionExpired(null);
   }, []);
 
   const initializeAuth = async () => {
