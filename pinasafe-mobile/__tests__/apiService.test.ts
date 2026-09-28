@@ -17,6 +17,63 @@ const jsonResponse = (status: number, body: unknown): Response =>
   } as unknown as Response);
 
 describe('apiService (F2 foundation)', () => {
+  const originalApiURL = process.env.EXPO_PUBLIC_API_URL;
+  const testApiURL = 'https://pinasafe-test-api.example.com';
+
+  beforeEach(() => {
+    process.env.EXPO_PUBLIC_API_URL = testApiURL;
+  });
+
+  afterAll(() => {
+    if (originalApiURL === undefined) {
+      delete process.env.EXPO_PUBLIC_API_URL;
+    } else {
+      process.env.EXPO_PUBLIC_API_URL = originalApiURL;
+    }
+  });
+
+  test('requires an explicit API endpoint instead of falling back to a legacy backend', async () => {
+    const configuredURL = process.env.EXPO_PUBLIC_API_URL;
+    delete process.env.EXPO_PUBLIC_API_URL;
+
+    try {
+      await expect(apiService.getTeams()).rejects.toThrow(
+        'PinaSafe API is not configured. Set EXPO_PUBLIC_API_URL.'
+      );
+
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      if (configuredURL === undefined) {
+        delete process.env.EXPO_PUBLIC_API_URL;
+      } else {
+        process.env.EXPO_PUBLIC_API_URL = configuredURL;
+      }
+    }
+  });
+
+  test('uses the explicitly configured API endpoint', async () => {
+    const configuredURL = process.env.EXPO_PUBLIC_API_URL;
+    process.env.EXPO_PUBLIC_API_URL = 'https://pinasafe-test-api.example.com/';
+
+    try {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(
+        jsonResponse(200, { data: [] })
+      );
+
+      await apiService.getTeams();
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://pinasafe-test-api.example.com/api/teams',
+        expect.any(Object)
+      );
+    } finally {
+      if (configuredURL === undefined) {
+        delete process.env.EXPO_PUBLIC_API_URL;
+      } else {
+        process.env.EXPO_PUBLIC_API_URL = configuredURL;
+      }
+    }
+  });
   beforeEach(async () => {
     jest.clearAllMocks();
     (global as any).fetch = jest.fn();

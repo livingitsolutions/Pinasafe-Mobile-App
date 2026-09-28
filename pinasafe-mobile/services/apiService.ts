@@ -83,16 +83,19 @@ export type EvidenceUploadResult =
   | { accepted: true; evidenceId: string; classification: EvidenceClassification };
 
 class APIService {
-  private baseURL: string;
   private token: string | null = null;
   private sessionExpiredListener: SessionExpiredListener | null = null;
 
-  constructor() {
-    // Use environment variable or default to localhost for development
-    this.baseURL = process.env.EXPO_PUBLIC_API_URL || 'https://pinasafe-backend.onrender.com';
-    // this.baseURL = process.env.EXPO_PUBLIC_API_URL || 'https://sinister-cauldron-q79q59r7446jfxpqq-3000.app.github.dev';
-    
-    
+  private getBaseURL(): string {
+    const configuredURL = process.env.EXPO_PUBLIC_API_URL?.trim();
+
+    if (!configuredURL) {
+      throw new Error(
+        'PinaSafe API is not configured. Set EXPO_PUBLIC_API_URL.'
+      );
+    }
+
+    return configuredURL.replace(/\/$/, '');
   }
 
   // private async initializeToken() {
@@ -126,7 +129,7 @@ class APIService {
       if (storedToken) this.token = storedToken;
     }
     const hadToken = Boolean(this.token);
-    const url = `${this.baseURL}/api${endpoint}`;
+    const url = `${this.getBaseURL()}/api${endpoint}`;
 
     const config: RequestInit = {
       headers: {
