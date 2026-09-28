@@ -1,0 +1,147 @@
+const { parseCorsOrigins } = require('../config/cors');
+const { validateConfiguration } = require('../config/database');
+
+const configurationNames = [
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'JWT_SECRET',
+  'EVIDENCE_STORAGE_BUCKET',
+  'AI_ENDPOINT_URL',
+  'EXPO_PUBLIC_AI_ENDPOINT_URL',
+  'CORS_ORIGIN',
+  'VITE_SUPABASE_URL',
+  'EXPO_PUBLIC_SUPABASE_URL'
+];
+
+const validConfiguration = {
+  SUPABASE_URL: 'https://example.supabase.co',
+  SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+  JWT_SECRET: 'a'.repeat(32),
+  EVIDENCE_STORAGE_BUCKET: 'private-evidence',
+  AI_ENDPOINT_URL: 'https://classifier.example/predict',
+  CORS_ORIGIN: 'http://localhost:8081'
+};
+
+const setConfiguration = (values = {}) => {
+  configurationNames.forEach((name) => {
+    delete process.env[name];
+  });
+
+  Object.assign(process.env, validConfiguration, values);
+
+  Object.keys(values).forEach((name) => {
+    if (values[name] === undefined) {
+      delete process.env[name];
+    }
+  });
+};
+
+describe('backend configuration validation', () => {
+  afterEach(() => {
+    configurationNames.forEach((name) => {
+      delete process.env[name];
+    });
+  });
+
+  test.each([
+    ['SUPABASE_URL', { SUPABASE_URL: undefined }],
+    ['SUPABASE_SERVICE_ROLE_KEY', { SUPABASE_SERVICE_ROLE_KEY: undefined }],
+    ['JWT_SECRET', { JWT_SECRET: undefined }],
+    ['AI_ENDPOINT_URL', { AI_ENDPOINT_URL: undefined }],
+    ['CORS_ORIGIN', { CORS_ORIGIN: undefined }]
+  ])('rejects missing %s', (name, values) => {
+    setConfiguration(values);
+
+    expect(() => validateConfiguration()).toThrow(new RegExp(name));
+  });
+
+  test('rejects a JWT secret shorter than 32 characters', () => {
+    setConfiguration({
+      JWT_SECRET: 'too-short'
+    });
+
+    expect(() => validateConfiguration()).toThrow(/JWT_SECRET/);
+  });
+
+  test('rejects the committed JWT secret placeholder', () => {
+    setConfiguration({
+      JWT_SECRET: 'replace-with-a-strong-random-secret'
+    });
+
+    expect(() => validateConfiguration()).toThrow(/JWT_SECRET/);
+  });
+
+  test.each(['', '   ', 'your-private-evidence-bucket', 'bucket name', 'example-bucket'])
+    ('rejects invalid EVIDENCE_STORAGE_BUCKET value %j', (bucket) => {
+      setConfiguration({ EVIDENCE_STORAGE_BUCKET: bucket });
+
+      expect(() => validateConfiguration()).toThrow(/EVIDENCE_STORAGE_BUCKET/);
+    });
+
+  test('does not use the public Expo AI endpoint as a backend fallback', () => {
+    setConfiguration({
+      AI_ENDPOINT_URL: undefined,
+      EXPO_PUBLIC_AI_ENDPOINT_URL: 'https://public-classifier.example/predict'
+    });
+
+    expect(() => validateConfiguration()).toThrow(/AI_ENDPOINT_URL/);
+  });
+
+  test.each([
+    'http://classifier.example/predict',
+    'not-a-url',
+    'https://user:password@classifier.example/predict',
+    'https://classifier.example/predict?token=value',
+    'https://classifier.example/predict#fragment',
+    'https://classifier.example/predict?',
+    'https://classifier.example/predict#',
+    'https://localhost/predict',
+    'https://127.0.0.1/predict',
+    'https://[::1]/predict'
+  ])('rejects unsafe AI_ENDPOINT_URL %j', (endpoint) => {
+    setConfiguration({ AI_ENDPOINT_URL: endpoint });
+
+    expect(() => validateConfiguration()).toThrow(/AI_ENDPOINT_URL/);
+  });
+
+  test('accepts valid required backend configuration', () => {
+    setConfiguration({
+      ...validConfiguration
+    });
+
+    expect(() => validateConfiguration()).not.toThrow();
+  });
+
+  test('does not accept browser-prefixed Supabase URLs as backend configuration', () => {
+    setConfiguration({
+      VITE_SUPABASE_URL: 'https://browser.example.supabase.co',
+      EXPO_PUBLIC_SUPABASE_URL: 'https://mobile.example.supabase.co',
+      SUPABASE_URL: undefined
+    });
+
+    expect(() => validateConfiguration()).toThrow(/SUPABASE_URL/);
+  });
+
+  test.each([
+    '',
+    '   ',
+    '*',
+    'ftp://example.com',
+    'https://example.com/path',
+    'https://example.com?query=value',
+    'https://example.com#fragment',
+    'https://user:password@example.com',
+    'http://localhost:8081,,https://example.com'
+  ])('rejects invalid CORS_ORIGIN value %j', (corsOrigin) => {
+    expect(() => parseCorsOrigins(corsOrigin)).toThrow(/CORS_ORIGIN/);
+  });
+
+  test('parses and deduplicates valid CORS origins', () => {
+    expect(parseCorsOrigins(
+      ' http://localhost:8081/, https://example.com, http://localhost:8081 '
+    )).toEqual([
+      'http://localhost:8081',
+      'https://example.com'
+    ]);
+  });
+});

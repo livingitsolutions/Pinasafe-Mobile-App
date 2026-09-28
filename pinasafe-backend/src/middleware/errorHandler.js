@@ -1,61 +1,56 @@
+const safeLogger = require('../utils/safeLogger');
+
 const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err);
-
-  // Default error
-  let error = {
-    message: err.message || 'Internal Server Error',
-    status: err.status || 500
-  };
-
-  // MySQL errors
-  if (err.code) {
-    switch (err.code) {
-      case 'ER_DUP_ENTRY':
-        error.message = 'Duplicate entry - resource already exists';
-        error.status = 409;
-        break;
-      case 'ER_NO_REFERENCED_ROW_2':
-        error.message = 'Referenced resource not found';
-        error.status = 400;
-        break;
-      case 'ER_ROW_IS_REFERENCED_2':
-        error.message = 'Cannot delete - resource is referenced by other records';
-        error.status = 400;
-        break;
-      case 'ECONNREFUSED':
-        error.message = 'Database connection failed';
-        error.status = 503;
-        break;
-    }
+  if (res.headersSent) {
+    return next(err);
   }
 
-  // JWT errors
+  let status = Number.isInteger(err.status) ? err.status : 500;
+  let message = 'Internal Server Error';
+  let details;
+
   if (err.name === 'JsonWebTokenError') {
-    error.message = 'Invalid token';
-    error.status = 401;
+    status = 401;
+    message = 'Invalid token';
+  } else if (err.name === 'TokenExpiredError') {
+    status = 401;
+    message = 'Token expired';
+  } else if (err.name === 'ValidationError') {
+    status = 400;
+    message = 'Validation failed';
+    details = Array.isArray(err.details)
+      ? err.details.map(({ type, msg, path, location, param }) => ({
+        type,
+        msg,
+        path: path || param,
+        location
+      }))
+      : undefined;
+  } else if (status === 400) {
+    message = 'Bad Request';
+  } else if (status === 401) {
+    message = 'Unauthorized';
+  } else if (status === 403) {
+    message = 'Forbidden';
+  } else if (status === 404) {
+    message = 'Not Found';
+  } else if (status === 409) {
+    message = 'Conflict';
+  } else if (status === 410) {
+    message = 'Gone';
+  } else if (status === 429) {
+    message = 'Too Many Requests';
+  } else if (status === 503) {
+    message = 'Service Unavailable';
+  } else {
+    status = 500;
   }
 
-  if (err.name === 'TokenExpiredError') {
-    error.message = 'Token expired';
-    error.status = 401;
-  }
+  safeLogger.error('http.unhandled_error', status);
 
-  // Validation errors
-  if (err.name === 'ValidationError') {
-    error.message = 'Validation failed';
-    error.status = 400;
-    error.details = err.details;
-  }
-
-  // Don't leak error details in production
-  if (process.env.NODE_ENV === 'production' && error.status === 500) {
-    error.message = 'Internal Server Error';
-  }
-
-  res.status(error.status).json({
-    error: error.message,
-    ...(error.details && { details: error.details }),
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  res.status(status).json({
+    error: message,
+    ...(details && { details })
   });
 };
 

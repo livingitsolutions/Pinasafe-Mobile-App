@@ -1,35 +1,36 @@
 const express = require('express');
 const { getClient } = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
 // Get all active organizations
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
   try {
     const supabase = getClient();
 
     const { data: organizations, error } = await supabase
       .from('organizations')
-      .select('*')
+      .select('id, name, type, contact_number, email, coverage_areas, is_active')
       .eq('is_active', true)
       .order('name');
 
     if (error) {
-      console.error('Get organizations error:', error);
+      safeLogger.error('organizations.list_failed');
       return res.status(500).json({ error: 'Failed to fetch organizations' });
     }
 
     res.json({ data: organizations });
 
   } catch (error) {
-    console.error('Get organizations error:', error);
+    safeLogger.error('organizations.list_failed');
     res.status(500).json({ error: 'Failed to fetch organizations' });
   }
 });
 
 // Get organization readiness with team details
-router.get('/readiness', authenticateToken, async (req, res) => {
+router.get('/readiness', authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
   try {
     const { user } = req;
     const supabase = getClient();
@@ -51,7 +52,7 @@ router.get('/readiness', authenticateToken, async (req, res) => {
     const { data: organizations, error: orgError } = await orgQuery.order('name');
 
     if (orgError) {
-      console.error('Get organizations error:', orgError);
+      safeLogger.error('organizations.readiness_org_failed');
       return res.status(500).json({ error: 'Failed to fetch organizations' });
     }
 
@@ -167,7 +168,7 @@ router.get('/readiness', authenticateToken, async (req, res) => {
     res.json({ data: readinessData });
 
   } catch (error) {
-    console.error('Get readiness error:', error);
+    safeLogger.error('organizations.readiness_failed');
     res.status(500).json({ error: 'Failed to fetch readiness data' });
   }
 });
@@ -185,7 +186,6 @@ router.get('/readiness', authenticateToken, async (req, res) => {
 //       .maybeSingle();
 
 //     if (error) {
-//       console.error('Get organization by ID error:', error);
 //       return res.status(500).json({ error: 'Failed to fetch organization' });
 //     }
 
@@ -196,7 +196,6 @@ router.get('/readiness', authenticateToken, async (req, res) => {
 //     res.json({ data: organization });
 
 //   } catch (error) {
-//     console.error('Get organization by ID error:', error);
 //     res.status(500).json({ error: 'Failed to fetch organization' });
 //   }
 // });
@@ -204,9 +203,17 @@ router.get('/readiness', authenticateToken, async (req, res) => {
 
 
 // Get organization personnel
-router.get('/:id/personnel', authenticateToken, async (req, res) => {
+router.get('/:id/personnel', authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
   try {
     const { id } = req.params;
+    const { user } = req;
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
+    if (!canAccessOrganization(user, id)) {
+      return res.status(403).json({ error: 'Access denied for this organization' });
+    }
+
     const supabase = getClient();
 
     const { data: personnel, error } = await supabase
@@ -216,164 +223,29 @@ router.get('/:id/personnel', authenticateToken, async (req, res) => {
       .order('name');
 
     if (error) {
-      console.error('Get personnel error:', error);
+      safeLogger.error('organizations.personnel_list_failed');
       return res.status(500).json({ error: 'Failed to fetch personnel' });
     }
 
     res.json({ data: personnel });
 
   } catch (error) {
-    console.error('Get personnel error:', error);
+    safeLogger.error('organizations.personnel_list_failed');
     res.status(500).json({ error: 'Failed to fetch personnel' });
   }
 });
 
-  // Create personnel under an organization
-  router.post('/:id/personnel', authenticateToken, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { name, contact_number, email, is_active, team, address, barangay, city, province } = req.body;
-
-      const supabase = getClient();
-
-      // Check if email already exists
-      const { data: existingUser } = await supabase
-        .from("users")
-        .select("id")
-        .eq("email", email.toLowerCase())
-        .maybeSingle();
-
-      if (existingUser) {
-        return res.status(409).json({ error: "Email already registered" });
-      }
-
-      // Default password for personnel
-      const rawPassword = "Password123";
-      const hashedPassword = await bcrypt.hash(rawPassword, 12);
-      const userId = uuidv4();
-
-      // Create user account for personnel
-      const { error: userInsertError } = await supabase
-        .from("users")
-        .insert({
-          id: userId,
-          email: email.toLowerCase(),
-          password_hash: hashedPassword,
-          name,
-          role: "responder",
-          phone: contact_number,
-          address: address || null,
-          barangay: barangay || null,
-          city: city || null,
-          province: province || null,
-          verified: true,
-          must_change_password: true,
-        });
-
-      if (userInsertError) {
-        console.error("User insert error:", userInsertError);
-        return res.status(500).json({ error: "Failed to create user account" });
-      }
-
-      // Insert into personnel table
-      const { data, error: personnelError } = await supabase
-        .from("personnel")
-        .insert([
-          {
-            organization_id: id,
-            name,
-            contact_number,
-            email,
-            is_active: is_active ?? true,
-            user_id: userId,
-            personnel_role: 'rescue_member',
-          }
-        ])
-        .select()
-        .single();
-
-      if (personnelError) {
-        console.error("Insert personnel error:", personnelError);
-        return res.status(500).json({ error: "Failed to create personnel record" });
-      }
-
-      res.status(201).json({
-        message: "Personnel created successfully",
-        personnel: data,
-        login_credentials: {
-          email,
-          password: rawPassword
-        }
-      });
-
-    } catch (error) {
-      console.error("Create personnel error:", error);
-      res.status(500).json({ error: "Server error creating personnel" });
-    }
-  });
-  // router.post('/:id/personnel', authenticateToken, async (req, res) => {
-  //   try {
-  //     const { id } = req.params;
-  //     const { name, position, contact_number, email, is_active, team } = req.body;
-  //     const supabase = getClient();
-
-  //     const { data, error } = await supabase
-  //       .from('personnel')
-  //       .insert([
-  //         {
-  //           organization_id: id,
-  //           name,
-  //           position: position || 'Member',
-  //           contact_number: contact_number || '',
-  //           email: email || null,
-  //           is_active: typeof is_active === 'boolean' ? is_active : true,
-  //           team: team || null,
-  //         },
-  //       ])
-  //       .select()
-  //       .single();
-
-  //     if (error) {
-  //       console.error('Insert personnel error:', error);
-  //       return res.status(500).json({ error: 'Failed to create personnel' });
-  //     }
-
-  //     res.status(201).json({ data });
-  //   } catch (error) {
-  //     console.error('Create personnel error:', error);
-  //     res.status(500).json({ error: 'Failed to create personnel' });
-  //   }
-  // });
-
-  // Update a personnel record (team assignment, leader flag, etc.)
-  router.put('/personnel/:personnelId', authenticateToken, async (req, res) => {
-    try {
-      const { personnelId } = req.params;
-      const updates = req.body;
-      const supabase = getClient();
-
-      const { data, error } = await supabase
-        .from('personnel')
-        .update(updates)
-        .eq('id', personnelId)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Update personnel error:', error);
-        return res.status(500).json({ error: 'Failed to update personnel' });
-      }
-
-      res.json({ data });
-    } catch (error) {
-      console.error('Update personnel error:', error);
-      res.status(500).json({ error: 'Failed to update personnel' });
-    }
-  });
-
-  router.get("/organization/:id/alerts", authenticateToken, async (req, res) => {
-  const supabase = getClient();
+  router.get("/organization/:id/alerts", authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
+  const { user } = req;
   const { id } = req.params;
+  const supabase = getClient();
+
+  if (!user.organization_id) {
+    return res.status(400).json({ error: 'User not assigned to an organization' });
+  }
+  if (!canAccessOrganization(user, id)) {
+    return res.status(403).json({ error: 'Access denied for this organization' });
+  }
 
   const { data, error } = await supabase
     .from("organization_alerts")

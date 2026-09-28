@@ -1,9 +1,19 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { getClient } = require('../config/database');
-const { authenticateToken, requireRole } = require('../middleware/auth');
-const { validateUUID } = require('../middleware/validation');
+const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
+const {
+  validateUUID,
+  validatePersonnelInvitation,
+  validatePersonnelCreate,
+  validatePersonnelUpdate
+} = require('../middleware/validation');
+const {
+  authenticatedRateLimiter,
+  PERSONNEL_INVITATION_RATE_LIMIT
+} = require('../middleware/authenticatedRateLimit');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -31,29 +41,137 @@ router.get('/', authenticateToken, requireRole(['admin', 'super_admin']), async 
     const { data: personnel, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Get personnel error:', error);
+      safeLogger.error('personnel.list_failed');
       return res.status(500).json({ error: 'Failed to fetch personnel' });
     }
 
     res.json({ data: personnel });
 
   } catch (error) {
-    console.error('Get personnel error:', error);
+    safeLogger.error('personnel.list_failed');
     res.status(500).json({ error: 'Failed to fetch personnel' });
   }
 });
 
-router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => {
+router.post(
+  '/invitations',
+  authenticateToken,
+  requireRole(['admin']),
+  authenticatedRateLimiter(PERSONNEL_INVITATION_RATE_LIMIT),
+  validatePersonnelInvitation,
+  async (req, res) => {
+    try {
+      const { user } = req;
+
+      if (!user.organization_id) {
+        return res.status(400).json({ error: 'User not assigned to an organization' });
+      }
+
+      const email = req.body.email.trim().toLowerCase();
+      const name = req.body.name.trim();
+      const contactNumber = req.body.contactNumber.trim();
+      const personnelRole = req.body.personnelRole;
+      const specializations = Array.isArray(req.body.specializations)
+        ? req.body.specializations.map((item) => item.trim())
+        : [];
+
+      // Personnel invitations from this workflow always create responder accounts.
+      const userRole = 'responder';
+      const supabase = getClient();
+
+      const { data: existingUsers, error: existingUserError } = await supabase
+        .from('users')
+        .select('id')
+        .ilike('email', email)
+        .limit(1);
+
+      if (existingUserError) {
+        return res.status(500).json({ error: 'Failed to verify invitation eligibility' });
+      }
+
+      if (existingUsers && existingUsers.length > 0) {
+        return res.status(409).json({ error: 'Email already registered' });
+      }
+
+      const rawToken = crypto.randomBytes(32).toString('base64url');
+      const tokenHash = crypto
+        .createHash('sha256')
+        .update(rawToken)
+        .digest('hex');
+
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const updatedAt = new Date().toISOString();
+
+      // Reissuing replaces any still-pending invitation, including one that
+      // has expired without having its status changed.
+      const { error: revokeError } = await supabase
+        .from('personnel_invites')
+        .update({
+          status: 'revoked',
+          consumed_at: null,
+          updated_at: updatedAt
+        })
+        .eq('organization_id', user.organization_id)
+        .eq('email', email)
+        .eq('status', 'pending');
+
+      if (revokeError) {
+        return res.status(500).json({ error: 'Failed to prepare personnel invitation' });
+      }
+
+      const { data: invitation, error: insertError } = await supabase
+        .from('personnel_invites')
+        .insert({
+          organization_id: user.organization_id,
+          email,
+          user_role: userRole,
+          personnel_role: personnelRole,
+          name,
+          contact_number: contactNumber,
+          specializations,
+          token_hash: tokenHash,
+          status: 'pending',
+          expires_at: expiresAt,
+          invited_by: user.id
+        })
+        .select('id, email, name, personnel_role, user_role, expires_at')
+        .single();
+
+      if (insertError) {
+        if (insertError.code === '23505') {
+          return res.status(409).json({
+            error: 'An active invitation already exists. Please retry.'
+          });
+        }
+
+        return res.status(500).json({ error: 'Failed to create personnel invitation' });
+      }
+
+      return res.status(201).json({
+        message: 'Personnel invitation created successfully',
+        data: {
+          id: invitation.id,
+          email: invitation.email,
+          name: invitation.name,
+          personnelRole: invitation.personnel_role,
+          userRole: invitation.user_role,
+          expiresAt: invitation.expires_at,
+          invitationToken: rawToken
+        }
+      });
+    } catch (error) {
+      return res.status(500).json({ error: 'Server error creating personnel invitation' });
+    }
+  }
+);
+
+router.post('/', authenticateToken, requireRole(['admin']), validatePersonnelCreate, async (req, res) => {
   try {
     const {
       userId,
       name,
       contactNumber,
       email,
-      address,
-      barangay,
-      city,
-      province,
       specializations,
       personnelRole
     } = req.body;
@@ -64,105 +182,72 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       return res.status(400).json({ error: 'User not assigned to an organization' });
     }
 
-    if (!['staff', 'rescue_member'].includes(personnelRole)) {
-      return res.status(400).json({ error: 'Invalid personnel role. Must be staff or rescue_member' });
+    if (!userId) {
+      return res.status(400).json({
+        error: 'New personnel accounts must be created through the invitation workflow'
+      });
     }
 
-    const personnelId = uuidv4();
+    if (!['staff', 'rescue_member'].includes(personnelRole)) {
+      return res.status(400).json({
+        error: 'Invalid personnel role. Must be staff or rescue_member'
+      });
+    }
+
     const supabase = getClient();
-    let finalUserId = userId;
 
-    if (userId) {
-      const { data: existingUser, error: userError } = await supabase
-        .from('users')
-        .select('id, organization_id')
-        .eq('id', userId)
-        .maybeSingle();
+    const { data: existingUser, error: userError } = await supabase
+      .from('users')
+      .select('id, organization_id')
+      .eq('id', userId)
+      .maybeSingle();
 
-      if (userError || !existingUser) {
-        return res.status(404).json({ error: 'User not found' });
-      }
+    if (userError || !existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-      if (existingUser.organization_id && existingUser.organization_id !== user.organization_id) {
-        return res.status(400).json({ error: 'User already assigned to another organization' });
-      }
+    if (
+      existingUser.organization_id &&
+      existingUser.organization_id !== user.organization_id
+    ) {
+      return res.status(400).json({
+        error: 'User already assigned to another organization'
+      });
+    }
 
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          organization_id: user.organization_id,
-          role: personnelRole === 'rescue_member' ? 'responder' : 'responder'
-        })
-        .eq('id', userId);
+    let assignmentQuery = supabase
+      .from('users')
+      .update({
+        organization_id: user.organization_id,
+        role: 'responder'
+      })
+      .eq('id', userId);
 
-      if (updateError) {
-        console.error('Update user organization error:', updateError);
-        return res.status(500).json({ error: 'Failed to assign user to organization' });
-      }
-    } else if (email) {
-      // Check if email already exists
-      const { data: existingEmail, error: emailCheckError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .maybeSingle();
+    assignmentQuery = existingUser.organization_id
+      ? assignmentQuery.eq('organization_id', user.organization_id)
+      : assignmentQuery.is('organization_id', null);
 
-      if (emailCheckError) {
-        console.error('Email check error:', emailCheckError);
-        return res.status(500).json({ error: 'Failed to check email availability' });
-      }
+    const { error: updateError } = await assignmentQuery;
 
-      if (existingEmail) {
-        return res.status(400).json({ error: 'Email already in use' });
-      }
-
-      // Hash the default password
-      const defaultPassword = 'Password123';
-      const passwordHash = await bcrypt.hash(defaultPassword, 10);
-      const userRole = 'responder';
-      const newUserId = uuidv4();
-
-      // Create user in public.users table
-      const { error: insertUserError } = await supabase
-        .from('users')
-        .insert({
-          id: newUserId,
-          email: email,
-          password_hash: passwordHash,
-          name: name,
-          phone: contactNumber || '',
-          address: address || null,
-          barangay: barangay || null,
-          city: city || null,
-          province: province || null,
-          role: userRole,
-          organization_id: user.organization_id,
-          must_change_password: true,
-          verified: true
-        });
-
-      if (insertUserError) {
-        console.error('Insert user into users table error:', insertUserError);
-        return res.status(500).json({ error: 'Failed to create user record', details: insertUserError.message });
-      }
-
-      finalUserId = newUserId;
+    if (updateError) {
+      return res.status(500).json({
+        error: 'Failed to assign user to organization'
+      });
     }
 
     const insertData = {
-      id: personnelId,
+      id: uuidv4(),
       organization_id: user.organization_id,
+      user_id: userId,
       name,
       contact_number: contactNumber,
       personnel_role: personnelRole
     };
 
-    if (finalUserId) {
-      insertData.user_id = finalUserId;
-    }
     if (email) {
       insertData.email = email;
     }
+
     if (specializations && specializations.length > 0) {
       insertData.specializations = specializations;
     }
@@ -178,33 +263,19 @@ router.post('/', authenticateToken, requireRole(['admin']), async (req, res) => 
       .single();
 
     if (error) {
-      console.error('Create personnel error details:', {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code
-      });
-      return res.status(500).json({
-        error: 'Failed to create personnel',
-        details: error.message
-      });
+      return res.status(500).json({ error: 'Failed to create personnel' });
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'Personnel added successfully',
       data: personnel
     });
-
   } catch (error) {
-    console.error('Create personnel error:', error);
-    res.status(500).json({
-      error: 'Server error creating personnel',
-      details: error.message
-    });
+    return res.status(500).json({ error: 'Server error creating personnel' });
   }
 });
 
-router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id'), async (req, res) => {
+router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id'), validatePersonnelUpdate, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -271,19 +342,14 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
       .from('personnel')
       .update(updateData)
       .eq('id', id)
+      .eq('organization_id', user.organization_id)
       .select('*')
       .single();
 
     if (updateError) {
-      console.error('Update personnel error details:', {
-        message: updateError.message,
-        details: updateError.details,
-        hint: updateError.hint,
-        code: updateError.code
-      });
+      safeLogger.error('personnel.update_failed');
       return res.status(500).json({
-        error: 'Failed to update personnel',
-        details: updateError.message
+        error: 'Failed to update personnel'
       });
     }
 
@@ -292,10 +358,11 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
       const { error: userUpdateError } = await supabase
         .from('users')
         .update(userUpdateData)
-        .eq('id', existingPersonnel.user_id);
+        .eq('id', existingPersonnel.user_id)
+        .eq('organization_id', user.organization_id);
 
       if (userUpdateError) {
-        console.error('Update user address error:', userUpdateError);
+        safeLogger.error('personnel.user_address_update_failed');
       }
     }
 
@@ -322,10 +389,9 @@ router.put('/:id', authenticateToken, requireRole(['admin']), validateUUID('id')
     });
 
   } catch (error) {
-    console.error('Update personnel error:', error);
+    safeLogger.error('personnel.update_failed');
     res.status(500).json({
-      error: 'Server error updating personnel',
-      details: error.message
+      error: 'Server error updating personnel'
     });
   }
 });
@@ -355,7 +421,7 @@ router.delete('/:id', authenticateToken, requireRole(['admin']), validateUUID('i
     res.json({ message: 'Personnel deactivated successfully' });
 
   } catch (error) {
-    console.error('Delete personnel error:', error);
+    safeLogger.error('personnel.deactivate_failed');
     res.status(500).json({ error: 'Failed to deactivate personnel' });
   }
 });
@@ -381,14 +447,14 @@ router.get('/rescue-members', authenticateToken, requireRole(['admin']), async (
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('Get rescue members error:', error);
+      safeLogger.error('personnel.rescue_members_list_failed');
       return res.status(500).json({ error: 'Failed to fetch rescue members' });
     }
 
     res.json({ data: rescueMembers });
 
   } catch (error) {
-    console.error('Get rescue members error:', error);
+    safeLogger.error('personnel.rescue_members_list_failed');
     res.status(500).json({ error: 'Failed to fetch rescue members' });
   }
 });
@@ -399,7 +465,10 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
     const { user } = req;
     const supabase = getClient();
 
-    // First, get the personnel record
+    if (userId !== user.id && user.role === 'citizen') {
+      return res.status(403).json({ error: 'Access denied to another user personnel record' });
+    }
+
     const { data: personnel, error: personnelError } = await supabase
       .from('personnel')
       .select('*')
@@ -407,7 +476,7 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
       .maybeSingle();
 
     if (personnelError) {
-      console.error('Get personnel by user ID error:', personnelError);
+      safeLogger.error('personnel.user_lookup_failed');
       return res.status(500).json({ error: 'Failed to fetch personnel' });
     }
 
@@ -415,7 +484,18 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Personnel not found' });
     }
 
-    // Then, get team membership if exists
+    if (userId !== user.id) {
+      if (user.role !== 'admin' && user.role !== 'responder') {
+        return res.status(403).json({ error: 'Access denied to another user personnel record' });
+      }
+      if (!user.organization_id) {
+        return res.status(400).json({ error: 'User not assigned to an organization' });
+      }
+      if (!canAccessOrganization(user, personnel.organization_id)) {
+        return res.status(403).json({ error: 'Access denied for this organization' });
+      }
+    }
+
     const { data: teamMembers, error: teamError } = await supabase
       .from('team_members')
       .select(`
@@ -434,7 +514,7 @@ router.get('/by-user/:userId', authenticateToken, async (req, res) => {
     res.json({ data: personnel });
 
   } catch (error) {
-    console.error('Get personnel by user ID error:', error);
+    safeLogger.error('personnel.user_lookup_failed');
     res.status(500).json({ error: 'Failed to fetch personnel' });
   }
 });

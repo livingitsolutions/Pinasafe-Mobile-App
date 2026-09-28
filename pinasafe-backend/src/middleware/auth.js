@@ -1,16 +1,19 @@
-const jwt = require('jsonwebtoken');
 const { getClient } = require('../config/database');
+const safeLogger = require('../utils/safeLogger');
+const {
+  extractBearerToken,
+  verifyAccessToken
+} = require('../utils/jwt');
 
 const authenticateToken = async (req, res, next) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = extractBearerToken(req.headers.authorization);
 
     if (!token) {
       return res.status(401).json({ error: 'Access token required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyAccessToken(token);
     const supabase = getClient();
 
     const { data: user, error } = await supabase
@@ -46,7 +49,7 @@ const authenticateToken = async (req, res, next) => {
       return res.status(403).json({ error: 'Token expired' });
     }
 
-    console.error('Auth middleware error:', error);
+    safeLogger.error('auth.authentication_failed');
     res.status(500).json({ error: 'Authentication failed' });
   }
 };
@@ -70,13 +73,24 @@ const requireRole = (roles) => {
   };
 };
 
+const canAccessOrganization = (user, organizationId) => {
+  if (!user || !organizationId) {
+    return false;
+  }
+
+  if (user.role !== 'admin' && user.role !== 'responder') {
+    return false;
+  }
+
+  return user.organization_id === organizationId;
+};
+
 const optionalAuth = async (req, res, next) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = extractBearerToken(req.headers.authorization);
 
     if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = verifyAccessToken(token);
       const supabase = getClient();
 
       const { data: user } = await supabase
@@ -97,5 +111,6 @@ const optionalAuth = async (req, res, next) => {
 module.exports = {
   authenticateToken,
   requireRole,
-  optionalAuth
+  optionalAuth,
+  canAccessOrganization
 };

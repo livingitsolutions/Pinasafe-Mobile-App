@@ -1,7 +1,8 @@
 const express = require('express');
 const { getClient } = require('../config/database');
 const { authenticateToken, requireRole } = require('../middleware/auth');
-const { validatePagination } = require('../middleware/validation');
+const { validatePagination, validateProfileUpdate } = require('../middleware/validation');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ router.get('/profile', authenticateToken, (req, res) => {
 });
 
 // Update user profile
-router.put('/profile', authenticateToken, async (req, res) => {
+router.put('/profile', authenticateToken, validateProfileUpdate, async (req, res) => {
   try {
     const { name, phone, address } = req.body;
     const userId = req.user.id;
@@ -36,7 +37,7 @@ router.put('/profile', authenticateToken, async (req, res) => {
       .single();
 
     if (error) {
-      console.error('Update profile error:', error);
+      safeLogger.error('users.profile_update_failed');
       return res.status(500).json({ error: 'Failed to update profile' });
     }
 
@@ -46,7 +47,7 @@ router.put('/profile', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Update profile error:', error);
+    safeLogger.error('users.profile_update_failed');
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -54,13 +55,19 @@ router.put('/profile', authenticateToken, async (req, res) => {
 // Get all users (admin only)
 router.get('/', authenticateToken, requireRole(['admin']), validatePagination, async (req, res) => {
   try {
+    const { user } = req;
     const { page = 1, limit = 20, role, verified } = req.query;
     const offset = (page - 1) * limit;
     const supabase = getClient();
 
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
+
     let query = supabase
       .from('users')
-      .select('id, email, name, role, phone, address, verified, created_at')
+      .select('id, email, name, role, phone, address, verified, created_at, organization_id')
+      .eq('organization_id', user.organization_id)
       .order('created_at', { ascending: false })
       .range(offset, offset + parseInt(limit) - 1);
 
@@ -75,7 +82,7 @@ router.get('/', authenticateToken, requireRole(['admin']), validatePagination, a
     const { data: users, error } = await query;
 
     if (error) {
-      console.error('Get users error:', error);
+      safeLogger.error('users.list_failed');
       return res.status(500).json({ error: 'Failed to fetch users' });
     }
 
@@ -89,7 +96,7 @@ router.get('/', authenticateToken, requireRole(['admin']), validatePagination, a
     });
 
   } catch (error) {
-    console.error('Get users error:', error);
+    safeLogger.error('users.list_failed');
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
@@ -99,28 +106,48 @@ router.put('/:id/role', authenticateToken, requireRole(['admin']), async (req, r
   try {
     const { id } = req.params;
     const { role } = req.body;
+    const { user } = req;
     const supabase = getClient();
+
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
 
     const validRoles = ['citizen', 'responder', 'admin'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
 
-    const { data: user, error } = await supabase
+    const { data: targetUser, error: targetUserError } = await supabase
+      .from('users')
+      .select('id, organization_id, role')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (targetUserError || !targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (targetUser.organization_id !== user.organization_id) {
+      return res.status(403).json({ error: 'Access denied for this organization' });
+    }
+
+    const { data: updatedUser, error } = await supabase
       .from('users')
       .update({ role, updated_at: new Date().toISOString() })
       .eq('id', id)
+      .eq('organization_id', user.organization_id)
       .select()
       .maybeSingle();
 
-    if (!user) {
+    if (!updatedUser) {
       return res.status(404).json({ error: 'User not found' });
     }
 
     res.json({ message: 'User role updated successfully' });
 
   } catch (error) {
-    console.error('Update user role error:', error);
+    safeLogger.error('users.role_update_failed');
     res.status(500).json({ error: 'Failed to update user role' });
   }
 });

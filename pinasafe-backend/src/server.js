@@ -1,16 +1,18 @@
 require('dotenv').config(); 
 const express = require('express');
-const cors = require('cors');
 const helmet = require('helmet');
-const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const { createRequestLogger } = require('./utils/requestLogger');
+const safeLogger = require('./utils/safeLogger');
 
 
-const { connectDatabase } = require('./config/database');
+const { connectDatabase, validateConfiguration } = require('./config/database');
+const { createCorsMiddleware, parseCorsOrigins } = require('./config/cors');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const emergencyRoutes = require('./routes/emergency');
+const evidenceRoutes = require('./routes/evidence');
 const organizationRoutes = require('./routes/organizations');
 const alertRoutes = require('./routes/alerts');
 const statsRoutes = require('./routes/stats');
@@ -22,13 +24,11 @@ const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const corsOrigins = parseCorsOrigins(process.env.CORS_ORIGIN);
 
 // Security middleware
 app.use(helmet());
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true
-}));
+app.use(createCorsMiddleware(corsOrigins));
 
 // Rate limiting
 // const limiter = rateLimit({
@@ -50,7 +50,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Logging
 if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('combined'));
+  app.use(createRequestLogger());
 }
 
 // Health check endpoint
@@ -66,6 +66,7 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/emergency-reports', emergencyRoutes);
+app.use('/api/evidence', evidenceRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/stats', statsRoutes);
@@ -88,34 +89,46 @@ app.use('*', (req, res) => {
 app.use(errorHandler);
 
 // Start server
+let server;
+
 async function startServer() {
   try {
+    validateConfiguration();
+
     // Connect to database
     await connectDatabase();
     console.log('✅ Database connected successfully');
 
     // Start listening
-    app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(`🚀 PinaSafe Backend API running on port ${PORT}`);
       console.log(`📍 Environment: ${process.env.NODE_ENV}`);
       console.log(`🔗 Health check: http://localhost:${PORT}/health`);
     });
+
+    return server;
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    safeLogger.error('server.start_failed');
     process.exit(1);
   }
 }
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
+// Stop accepting new connections before terminating the process.
+function shutdown() {
+  safeLogger.info('server.shutdown');
 
-process.on('SIGINT', () => {
-  console.log('🛑 SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
+  if (!server) {
+    process.exit(0);
+    return;
+  }
+
+  server.close(() => {
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 if (require.main === module) {
   startServer();

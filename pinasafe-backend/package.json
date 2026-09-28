@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "jest",
-    "migrate": "node src/scripts/migrate.js"
+    "migrate": "node src/scripts/migrate.js",
+    "bootstrap:pilot": "node src/scripts/bootstrapPilot.js"
   },
   "keywords": ["emergency", "response", "api", "mysql"],
   "author": "PinaSafe Team",

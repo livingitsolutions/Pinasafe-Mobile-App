@@ -1,26 +1,21 @@
-FROM node:18-alpine
+FROM node:22-alpine
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files
+ENV NODE_ENV=production
+
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
-# Copy source code
-COPY src/ ./src/
+COPY --chown=node:node src/ ./src/
 
-# Create uploads directory
-RUN mkdir -p uploads
+USER node
 
-# Expose port
-EXPOSE 3000
+EXPOSE 4000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+  CMD node -e "const p=process.env.PORT||4000;const r=require('http').get({host:'127.0.0.1',port:p,path:'/health'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));"
 
-# Start the application
+
 CMD ["npm", "start"]

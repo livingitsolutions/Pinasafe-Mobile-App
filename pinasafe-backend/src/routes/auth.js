@@ -1,12 +1,86 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { getClient } = require('../config/database');
-const { validateRegister, validateLogin } = require('../middleware/validation');
+const {
+  validateRegister,
+  validateLogin,
+  validatePersonnelInvitationAcceptance
+} = require('../middleware/validation');
 const { authenticateToken } = require('../middleware/auth');
+const {
+  authenticatedRateLimiter,
+  CHANGE_PASSWORD_RATE_LIMIT,
+  REFRESH_RATE_LIMIT
+} = require('../middleware/authenticatedRateLimit');
+const { signAccessToken } = require('../utils/jwt');
+const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
+
+router.post(
+  '/personnel-invitations/accept',
+  validatePersonnelInvitationAcceptance,
+  async (req, res) => {
+    try {
+      const { token, password } = req.body;
+      const supabase = getClient();
+
+      const tokenHash = crypto
+        .createHash('sha256')
+        .update(token)
+        .digest('hex');
+
+      const passwordHash = await bcrypt.hash(password, 12);
+
+      const { error } = await supabase.rpc('accept_personnel_invitation', {
+        p_token_hash: tokenHash,
+        p_password_hash: passwordHash
+      });
+
+      if (error) {
+        const databaseMessage = error.message || '';
+
+        if (databaseMessage.includes('INVALID_INVITATION')) {
+          return res.status(400).json({
+            error: 'Invalid invitation'
+          });
+        }
+
+        if (databaseMessage.includes('INVITATION_NOT_PENDING')) {
+          return res.status(409).json({
+            error: 'Invitation is no longer available'
+          });
+        }
+
+        if (databaseMessage.includes('INVITATION_EXPIRED')) {
+          return res.status(410).json({
+            error: 'Invitation has expired'
+          });
+        }
+
+        if (databaseMessage.includes('EMAIL_ALREADY_EXISTS')) {
+          return res.status(409).json({
+            error: 'An account already exists for this email'
+          });
+        }
+
+        return res.status(500).json({
+          error: 'Failed to accept invitation'
+        });
+      }
+
+      return res.status(201).json({
+        message: 'Personnel invitation accepted successfully'
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: 'Failed to accept invitation'
+      });
+    }
+  }
+);
 
 router.post('/register', validateRegister, async (req, res) => {
   try {
@@ -41,7 +115,7 @@ router.post('/register', validateRegister, async (req, res) => {
       });
 
     if (insertError) {
-      console.error('User insert error:', insertError);
+      safeLogger.error('auth.registration_insert_failed');
       return res.status(500).json({ error: 'Registration failed' });
     }
 
@@ -58,10 +132,8 @@ router.post('/register', validateRegister, async (req, res) => {
         created_by: userId
       });
 
-    const token = jwt.sign(
+    const token = signAccessToken(
       { userId, email: email.toLowerCase(), role: 'citizen' },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     const { data: user } = await supabase
@@ -77,7 +149,7 @@ router.post('/register', validateRegister, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Registration error:', error);
+    safeLogger.error('auth.registration_failed');
     res.status(500).json({ error: 'Registration failed' });
   }
 });
@@ -115,10 +187,8 @@ router.post('/login', validateLogin, async (req, res) => {
       }
     }
 
-    const token = jwt.sign(
+    const token = signAccessToken(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     delete user.password_hash;
@@ -131,19 +201,17 @@ router.post('/login', validateLogin, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Login error:', error);
+    safeLogger.error('auth.login_failed');
     res.status(500).json({ error: 'Login failed' });
   }
 });
 
-router.post('/refresh', authenticateToken, async (req, res) => {
+router.post('/refresh', authenticateToken, authenticatedRateLimiter(REFRESH_RATE_LIMIT), async (req, res) => {
   try {
     const { user } = req;
 
-    const token = jwt.sign(
+    const token = signAccessToken(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
     res.json({
@@ -152,12 +220,12 @@ router.post('/refresh', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Token refresh error:', error);
+    safeLogger.error('auth.refresh_failed');
     res.status(500).json({ error: 'Token refresh failed' });
   }
 });
 
-router.post('/change-password', authenticateToken, async (req, res) => {
+router.post('/change-password', authenticateToken, authenticatedRateLimiter(CHANGE_PASSWORD_RATE_LIMIT), async (req, res) => {
   try {
     const { newPassword } = req.body;
     const supabase = getClient();
@@ -173,14 +241,14 @@ router.post('/change-password', authenticateToken, async (req, res) => {
       .eq("id", req.user.id);
 
     if (error) {
-      console.error("Password change error:", error);
+      safeLogger.error('auth.password_change_failed');
       return res.status(500).json({ error: "Failed to change password" });
     }
 
     res.json({ message: "Password changed successfully" });
 
   } catch (error) {
-    console.error("Change password error:", error);
+    safeLogger.error('auth.password_change_failed');
     res.status(500).json({ error: "Failed to change password" });
   }
 });
