@@ -1,12 +1,14 @@
 const express = require('express');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
-const { getClient } = require('../config/database');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { getClient, getEvidenceStorageBucket } = require('../config/database');
+const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
 const { persistEvidenceImage } = require('../services/evidencePersistenceService');
 const { MAX_EVIDENCE_BYTES } = require('../services/evidenceStorageService');
 const safeLogger = require('../utils/safeLogger');
+
+const SIGNED_URL_EXPIRES_IN = 300;
 
 const router = express.Router();
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -251,6 +253,117 @@ router.post(
 
       safeLogger.error('evidence.persistence_failed');
       return res.status(503).json({ error: 'Evidence persistence unavailable' });
+    }
+  }
+);
+
+router.get(
+  '/reports/:reportId',
+  authenticateToken,
+  validateUUID('reportId'),
+  async (req, res) => {
+    try {
+      const { reportId } = req.params;
+      const { user } = req;
+      const supabase = getClient();
+
+      const { data: report, error: reportError } = await supabase
+        .from('emergency_reports')
+        .select('id, reported_by, organization_id, assigned_team_id, status')
+        .eq('id', reportId)
+        .maybeSingle();
+
+      if (reportError || !report) {
+        return res.status(404).json({ error: 'Emergency report not found' });
+      }
+
+      let authorized = false;
+
+      if (user.role === 'super_admin') {
+        authorized = true;
+      } else if (user.role === 'citizen') {
+        authorized = report.reported_by === user.id;
+      } else if (user.role === 'admin') {
+        authorized = canAccessOrganization(user, report.organization_id);
+      } else if (user.role === 'responder') {
+        if (!canAccessOrganization(user, report.organization_id)) {
+          authorized = false;
+        } else if (!report.assigned_team_id) {
+          authorized = false;
+        } else {
+          const { data: team } = await supabase
+            .from('rescue_teams')
+            .select('id, team_leader_id')
+            .eq('id', report.assigned_team_id)
+            .maybeSingle();
+
+          if (!team) {
+            authorized = false;
+          } else if (team.team_leader_id === user.id) {
+            authorized = true;
+          } else {
+            const { data: membership } = await supabase
+              .from('team_members')
+              .select('id')
+              .eq('team_id', report.assigned_team_id)
+              .eq('user_id', user.id)
+              .maybeSingle();
+            authorized = Boolean(membership);
+          }
+        }
+      }
+
+      if (!authorized) {
+        return res.status(403).json({ error: 'You are not authorized to view this evidence' });
+      }
+
+      const { data: evidenceRows, error: evidenceError } = await supabase
+        .from('report_evidence')
+        .select('id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, created_at')
+        .eq('emergency_report_id', reportId)
+        .eq('status', 'bound');
+
+      if (evidenceError) {
+        safeLogger.error('evidence.retrieval_query_failed');
+        return res.status(500).json({ error: 'Failed to retrieve evidence' });
+      }
+
+      if (!evidenceRows || evidenceRows.length === 0) {
+        return res.json({ data: [] });
+      }
+
+      const bucket = getEvidenceStorageBucket();
+      const items = await Promise.all(
+        evidenceRows.map(async (row) => {
+          const { data: signedUrlData, error: signError } = await supabase
+            .storage
+            .from(bucket)
+            .createSignedUrl(row.storage_path, SIGNED_URL_EXPIRES_IN);
+
+          const signedUrl = signError ? null : signedUrlData?.signedUrl;
+
+          return {
+            id: row.id,
+            url: signedUrl,
+            mimeType: row.mime_type,
+            byteSize: row.byte_size,
+            width: row.width,
+            height: row.height,
+            classification: {
+              label: row.classification_label,
+              confidence: row.classification_confidence,
+              caption: row.classification_caption
+            },
+            createdAt: row.created_at,
+            expiresIn: SIGNED_URL_EXPIRES_IN
+          };
+        })
+      );
+
+      res.json({ data: items });
+    } catch (error) {
+      safeLogger.error('evidence.retrieval_failed');
+      res.status(500).json({ error: 'Failed to retrieve evidence' });
     }
   }
 );
