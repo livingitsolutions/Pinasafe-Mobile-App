@@ -6,7 +6,7 @@ import { useEmergency } from '@/contexts/EmergencyContext';
 import { apiService, isApiError } from '@/services/apiService';
 import teamService, { RescueTeam } from '@/services/teamService';
 import { acquireDispatchLock } from '@/utils/adminDispatch';
-import { Banner, Button, Card, Dialog, EmptyState, ErrorState, ListRow, PageHeader, Priority, Screen, Section, StatusBadge, TypeBadge } from '@/components/ui';
+import { Banner, Button, Card, Dialog, EmptyState, ListRow, PageHeader, Priority, Screen, Section, StatusBadge, TypeBadge } from '@/components/ui';
 import { colors, radius, space, type } from '@/theme/tokens';
 import { isTeamPresentationReady } from '@/utils/operations';
 
@@ -20,7 +20,6 @@ export default function AdminIncidents() {
   const [loadingTeams, setLoadingTeams] = useState(false);
   const [dispatching, setDispatching] = useState(false);
   const [message, setMessage] = useState('');
-  const [error] = useState('');
   const lock = useRef(false);
   const visible = useMemo(() => reports.filter(item => filter === 'all' || item.status === filter), [filter, reports]);
 
@@ -40,7 +39,6 @@ export default function AdminIncidents() {
 
   return <Screen>
     <PageHeader eyebrow="Operations queue" title="Incidents" description="Inspect every report, then dispatch pending incidents to an eligible response team." action={<Button variant="secondary" label="Refresh" onPress={refreshReports} />} />
-    {error ? <ErrorState message={error} onRetry={refreshReports} /> : null}
     <View accessibilityRole="tablist" style={styles.filters}>{filters.map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: filter === value }} onPress={() => setFilter(value)} style={[styles.filter, filter === value && styles.filterActive]}><Text style={[styles.filterText, filter === value && styles.filterTextActive]}>{value}</Text></Pressable>)}</View>
     <Section title={`${visible.length} ${visible.length === 1 ? 'incident' : 'incidents'}`}>
       {visible.length === 0 ? <EmptyState title="No incidents in this view" message="Choose another lifecycle filter or refresh the queue." /> : <Card>{visible.map(report => <ListRow key={report.id} onPress={() => router.push(`/incident/${report.id}`)} leading={<TypeBadge value={report.type} />} title={report.location} subtitle={`${report.description} · ${report.reportedAt ? new Date(report.reportedAt).toLocaleString() : 'Time unavailable'}`} trailing={<View style={styles.rowActions}><StatusBadge value={report.status} /><Priority value={report.priority} />{report.status === 'pending' ? <Button label="Dispatch" onPress={() => openDispatch(report)} /> : null}</View>} />)}</Card>}

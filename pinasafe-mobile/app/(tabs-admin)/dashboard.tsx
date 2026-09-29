@@ -11,13 +11,13 @@ export default function AdminDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const attention = useMemo(() => reports.filter(item => item.status !== 'resolved').sort((a, b) => (a.status === 'pending' ? -1 : b.status === 'pending' ? 1 : 0)), [reports]);
-  const counts = useMemo(() => ({ pending: reports.filter(r => r.status === 'pending').length, responding: reports.filter(r => r.status === 'responding').length, resolved: reports.filter(r => r.status === 'resolved').length }), [reports]);
+  const counts = useMemo(() => ({ pending: reports.filter(r => r.status === 'pending').length, dispatched: reports.filter(r => r.status === 'dispatched').length, responding: reports.filter(r => r.status === 'responding').length, resolved: reports.filter(r => r.status === 'resolved').length }), [reports]);
   const refresh = useCallback(async () => { setRefreshing(true); setError(''); try { await refreshReports(); } catch { setError('Command data could not be refreshed.'); } finally { setRefreshing(false); } }, [refreshReports]);
 
   return <Screen>
     <PageHeader eyebrow="Operations" title="Command center" description="Live incident attention queue for your organization." action={<Button variant="secondary" label="Refresh" onPress={refresh} loading={refreshing} />} />
     {error ? <ErrorState message={error} onRetry={refresh} /> : null}
-    <ResponsiveGrid><MetricCard label="Awaiting dispatch" value={counts.pending} tone={counts.pending ? 'critical' : 'default'} hint="Needs an eligible team" /><MetricCard label="Teams responding" value={counts.responding} hint="Active field response" /><MetricCard label="Resolved" value={counts.resolved} tone="success" hint="All recorded incidents" /></ResponsiveGrid>
+    <ResponsiveGrid><MetricCard label="Awaiting dispatch" value={counts.pending} tone={counts.pending ? 'critical' : 'default'} hint="Needs an eligible team" /><MetricCard label="Dispatched" value={counts.dispatched} tone={counts.dispatched ? 'warning' : 'default'} hint="Awaiting responder" /><MetricCard label="Teams responding" value={counts.responding} hint="Active field response" /><MetricCard label="Resolved" value={counts.resolved} tone="success" hint="All recorded incidents" /></ResponsiveGrid>
     <View style={styles.board}>
       <Section title="Needs attention" description="Pending incidents appear first." action={<Button variant="quiet" label="Open full queue" onPress={() => router.push('/(tabs-admin)/incidents')} icon={<ArrowRight size={17} color={colors.ink} />} />}>
         {attention.length === 0 ? <EmptyState title="Queue is clear" message="There are no unresolved incidents in your organization." /> : <Card>{attention.slice(0, 7).map(report => <ListRow key={report.id} onPress={() => router.push(`/incident/${report.id}`)} leading={<TypeBadge value={report.type} />} title={report.location} subtitle={report.description} trailing={<View style={styles.trailing}><StatusBadge value={report.status} /><Priority value={report.priority} /></View>} />)}</Card>}

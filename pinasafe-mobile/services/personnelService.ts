@@ -95,7 +95,11 @@ class PersonnelService {
       personnelRole: data.personnelRole,
       specializations: data.specializations,
     });
-    return response.data.data;
+    const payload = response.data?.data ?? response.data;
+    if (!payload || !payload.email || !payload.invitationToken) {
+      throw new Error('Invitation response is missing required fields.');
+    }
+    return payload;
   }
 
   async updatePersonnel(id: string, data: UpdatePersonnelData): Promise<Personnel> {

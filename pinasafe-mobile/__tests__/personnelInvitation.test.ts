@@ -119,4 +119,49 @@ describe('personnel invitation completion flow', () => {
     expect(sessionExpired).not.toHaveBeenCalled();
     expect(apiService.getToken()).toBe('existing-session');
   });
+
+  test('M. invitePersonnel returns result on expected response', async () => {
+    const personnelService = (await import('../services/personnelService')).default;
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, {
+      data: { email: 'responder@example.com', invitationToken: 'tok-123' },
+    }));
+
+    const result = await personnelService.invitePersonnel({
+      email: 'responder@example.com',
+      name: 'Jane',
+      contactNumber: '123',
+      personnelRole: 'rescue_member',
+    });
+
+    expect(result.email).toBe('responder@example.com');
+    expect(result.invitationToken).toBe('tok-123');
+  });
+
+  test('N. invitePersonnel throws on missing nested data', async () => {
+    const personnelService = (await import('../services/personnelService')).default;
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, {
+      message: 'Created',
+    }));
+
+    await expect(personnelService.invitePersonnel({
+      email: 'responder@example.com',
+      name: 'Jane',
+      contactNumber: '123',
+      personnelRole: 'rescue_member',
+    })).rejects.toThrow();
+  });
+
+  test('O. invitePersonnel throws on malformed payload without crashing', async () => {
+    const personnelService = (await import('../services/personnelService')).default;
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, {
+      data: { email: null },
+    }));
+
+    await expect(personnelService.invitePersonnel({
+      email: 'responder@example.com',
+      name: 'Jane',
+      contactNumber: '123',
+      personnelRole: 'rescue_member',
+    })).rejects.toThrow();
+  });
 });

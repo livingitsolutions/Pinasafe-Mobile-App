@@ -287,4 +287,133 @@ describe('Authorization boundary checks', () => {
 
     expect(response.status).toBe(403);
   });
+
+  test('same-org admin can dismiss an alert matching their org type', async () => {
+    const alertRow = { id: '123e4567-e89b-12d3-a456-426614174013', type: 'fire', is_active: true };
+    const orgRow = { type: 'fire' };
+    const updateResult = { error: null };
+    const mockSupabase = {
+      from: jest.fn()
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: alertRow, error: null }),
+        })
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: orgRow, error: null }),
+        })
+        .mockReturnValueOnce({
+          update: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockResolvedValue(updateResult),
+        }),
+    };
+    getClient.mockReturnValue(mockSupabase);
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, res, next) => {
+      req.user = { id: 'admin-1', role: 'admin', organization_id: 'fire-org-1' };
+      next();
+    });
+    app.use('/alerts', alertsRouter);
+
+    const response = await request(app)
+      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
+
+    expect(response.status).toBe(200);
+    expect(response.body.message).toBe('Alert dismissed successfully');
+  });
+
+  test('cross-org admin cannot dismiss an alert of a different org type', async () => {
+    const alertRow = { id: '123e4567-e89b-12d3-a456-426614174013', type: 'fire', is_active: true };
+    const orgRow = { type: 'rescue' };
+    const mockSupabase = {
+      from: jest.fn()
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: alertRow, error: null }),
+        })
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: orgRow, error: null }),
+        }),
+    };
+    getClient.mockReturnValue(mockSupabase);
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, res, next) => {
+      req.user = { id: 'admin-1', role: 'admin', organization_id: 'rescue-org-1' };
+      next();
+    });
+    app.use('/alerts', alertsRouter);
+
+    const response = await request(app)
+      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
+
+    expect(response.status).toBe(403);
+    expect(mockSupabase.from).toHaveBeenCalledTimes(2);
+  });
+
+  test('nonexistent alert returns 404 without mutation', async () => {
+    const mockSupabase = {
+      from: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+      }),
+    };
+    getClient.mockReturnValue(mockSupabase);
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, res, next) => {
+      req.user = { id: 'admin-1', role: 'admin', organization_id: 'org-1' };
+      next();
+    });
+    app.use('/alerts', alertsRouter);
+
+    const response = await request(app)
+      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
+
+    expect(response.status).toBe(404);
+    expect(mockSupabase.from).toHaveBeenCalledTimes(1);
+  });
+
+  test('unauthorized dismissal does not mutate alert', async () => {
+    const alertRow = { id: '123e4567-e89b-12d3-a456-426614174013', type: 'fire', is_active: true };
+    const orgRow = { type: 'rescue' };
+    const mockSupabase = {
+      from: jest.fn()
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: alertRow, error: null }),
+        })
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: orgRow, error: null }),
+        }),
+    };
+    getClient.mockReturnValue(mockSupabase);
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, res, next) => {
+      req.user = { id: 'responder-1', role: 'responder', organization_id: 'rescue-org-1' };
+      next();
+    });
+    app.use('/alerts', alertsRouter);
+
+    const response = await request(app)
+      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
+
+    expect(response.status).toBe(403);
+    expect(mockSupabase.from).toHaveBeenCalledTimes(2);
+  });
 });

@@ -522,25 +522,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = async (email: string, password: string, userData: any) => {
     try {
-      // Combine address components into single address string
-      const addressComponents = [
-        userData.streetName,
-        userData.selectedBarangayName ? `Brgy. ${userData.selectedBarangayName}` : '',
-        userData.selectedCityName,
-        userData.province,
-        userData.country,
-        userData.zipcode
-      ].filter(Boolean);
-      
-      const combinedAddress = addressComponents.join(', ');
-
-      // Create user via API
+      const address = userData.streetName || userData.address || '';
       const response = await apiService.register({
         email,
         password,
         name: userData.name,
         phone: userData.phone,
-        address: combinedAddress,
+        address,
       });
 
       if (response.error) {
