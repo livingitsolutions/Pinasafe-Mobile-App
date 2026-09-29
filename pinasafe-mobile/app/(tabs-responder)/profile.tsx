@@ -2,7 +2,7 @@ import React from 'react';
 import ProfileScreen from '@/components/ProfileScreen';
 
 function ResponderProfile() {
-  return <ProfileScreen userRole="responder" />;
+  return <ProfileScreen />;
 }
 
 export default React.memo(ResponderProfile);

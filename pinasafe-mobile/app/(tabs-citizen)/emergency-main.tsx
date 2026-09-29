@@ -1,159 +1,25 @@
+import React from 'react';
+import { Linking, StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import { AlertTriangle, Clock3, Phone, Shield } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEmergency } from '@/contexts/EmergencyContext';
-import { locationService } from '@/hooks/locationService';
-import { router } from 'expo-router';
-import { TriangleAlert as AlertTriangle, Ambulance, Building, Camera, Clock, FileText, Flame, MapPin, Phone, Shield } from 'lucide-react-native';
-import React, { useCallback } from 'react';
-import { Alert, Image, ScrollView, Text, TouchableOpacity, View, Linking, Platform } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Banner, Button, Card, ListRow, PageHeader, Screen, Section, StatusBadge } from '@/components/ui';
+import { colors, radius, space, type } from '@/theme/tokens';
 
-const emergencyServices = [
-  {
-    id: 1,
-    name: 'PNP / PULIS',
-    number: '+63-998-598-6494',
-    icon: Shield,
-    color: 'bg-safety-600',
-    description: 'Philippine National Police',
-  },
-  {
-    id: 2,
-    name: 'BFP / BUMBERO',
-    number: '+63-906-616-5596',
-    icon: Flame,
-    color: 'bg-red-600',
-    description: 'Bureau of Fire Protection',
-  },
-  {
-    id: 4,
-    name: 'MDRRMO / RESCUE',
-    number: '+63-917-844-9843',
-    icon: Building,
-    color: 'bg-amber-600',
-    description: 'Hilongos DRRMO',
-  },
-];
-
-const quickActions = [
-  { id: 1, name: 'Report Emergency', icon: Camera, color: 'bg-blue-500' },
-];
-
-const CitizenEmergency: React.FC = () => {
- // Safe context usage
-  let user: any = null;
-  let getActiveAlerts: () => any[] = () => [];
-  
-  try {
-    const authContext = useAuth();
-    user = authContext.user;
-  } catch (error) {
-    console.warn('Context not available:', error);
-  }
-
-  const dialNumber = (phone: string) => {
-    const clean = phone.replace(/[^0-9+]/g, '');
-    const url = Platform.OS === 'ios' ? `telprompt:${clean}` : `tel:${clean}`;
-    Linking.openURL(url);
-  };
-
-
-  const handleQuickAction = useCallback((action: string) => {
-    if (action === 'Report Emergency') {
-      router.push('/(tabs-citizen)/emergency/report');
-    }  
-  }, []);
-
-  return (
-    <SafeAreaView className="flex-1 bg-gray-50 h-screen"
-      edges={['top', 'left', 'right']}
-    >
-      <ScrollView className="flex-1"
-      showsVerticalScrollIndicator={true}
-      >
-        {/* Header */}
-        <View className="bg-white px-6 py-6 shadow-sm flex-row items-center">
-          {/* Avatar */}
-          <Image
-            source={{ uri: 'https://i.pravatar.cc/100' }}
-            className="w-14 h-14 rounded-full mr-4"
-          />
-
-          {/* User Info */}
-          <View>
-            <Text className="text-2xl font-bold text-gray-900">
-              {user?.name ? `Welcome back, ${user.name}` : "Welcome"}
-            </Text>
-            <Text className="text-gray-600 mt-1">Hilongos, Leyte</Text>
-          </View>
-        </View>
-
-        {/* Quick Actions */}
-        <View className="mx-6 mt-6">
-          <Text className="text-lg font-bold text-gray-900 mb-3">Quick Actions</Text>
-          <View className="flex-row justify-between">
-            {quickActions.map((action) => (
-              <TouchableOpacity
-                key={action.id}
-                onPress={() => handleQuickAction(action.name)}
-                className="flex-1 mx-1"
-              >
-                <View className={`${action.color} p-4 rounded-xl items-center`}>
-                  <action.icon size={24} color="#FFFFFF" strokeWidth={1.5} />
-                  <Text className="text-white text-sm font-medium mt-2 text-center">
-                    {action.name}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Emergency Services */}
-        <View className="mx-6 mt-6">
-          <Text className="text-lg font-bold text-gray-900 mb-3">Emergency Services</Text>
-          <View className="gap-y-3">
-            {emergencyServices.map((service) => (
-              <TouchableOpacity
-                key={service.id}
-                onPress={() => dialNumber(service.number)}   // OPEN DIALER WHEN TAPPING ANYWHERE
-                className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex-row items-center"
-              >
-                <View className={`${service.color} p-3 rounded-full`}>
-                  <service.icon size={24} color="#FFFFFF" strokeWidth={1.5} />
-                </View>
-
-                <View className="ml-4 flex-1">
-                  <Text className="font-semibold text-gray-900">{service.name}</Text>
-                  <Text className="text-gray-600 text-sm">{service.description}</Text>
-                  <Text className="text-emergency-600 font-bold mt-1">{service.number}</Text>
-                </View>
-
-                {/* RED PHONE ICON → ALSO OPENS THE DIALER */}
-                <TouchableOpacity onPress={() => dialNumber(service.number)}>
-                  <Phone size={20} color="#DC2626" strokeWidth={1.5} />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Emergency Tips */}
-        <View className="mx-6 mt-6 mb-6">
-          <Text className="text-lg font-bold text-gray-900 mb-3">Emergency Tips</Text>
-          <View className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-            <Text className="font-medium text-gray-900 mb-2">In case of emergency:</Text>
-            <Text className="text-gray-600 text-sm leading-5">
-              • Stay calm and assess the situation{'\n'}
-              • Call appropriate emergency services{'\n'}
-              • Provide clear location information{'\n'}
-              • Follow instructions from authorities{'\n'}
-              • Keep emergency contacts updated
-            </Text>
-          </View>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
+export default function CitizenHome() {
+  const { user } = useAuth();
+  const { reports } = useEmergency();
+  const active = reports.filter(report => report.status !== 'resolved');
+  return <Screen>
+    <PageHeader eyebrow="PinaSafe citizen" title={`Stay safe${user?.name ? `, ${user.name.split(' ')[0]}` : ''}`} description="Report a supported road or fire emergency with live evidence, then follow its verified status." />
+    <Card tone="critical" style={styles.hero}><View style={styles.heroIcon}><AlertTriangle size={28} color={colors.brand} /></View><View style={styles.heroCopy}><Text style={styles.heroTitle}>Emergency report</Text><Text style={styles.heroText}>Capture what is happening, confirm the location, and review everything before sending.</Text></View><Button label="Start report" onPress={() => router.push('/(tabs-citizen)/emergency/report')} /></Card>
+    <Banner title="Immediate danger?" message="PinaSafe is a reporting tool and does not replace your local emergency hotline. Use the verified emergency number for your location." tone="warning" />
+    <Section title="Current incidents" description="Status changes come from the response workflow.">
+      {active.length === 0 ? <Card style={styles.calm}><Shield size={24} color={colors.success} /><View style={styles.heroCopy}><Text style={styles.calmTitle}>No active reports</Text><Text style={styles.heroText}>Your submitted incidents that need attention appear here.</Text></View></Card> : <Card>{active.slice(0, 3).map(report => <ListRow key={report.id} title={report.type === 'fire' ? 'Fire incident' : 'Road incident'} subtitle={report.location} trailing={<StatusBadge value={report.status} />} onPress={() => router.push(`/incident/${report.id}`)} />)}<Button variant="quiet" label="View all incidents" onPress={() => router.push('/(tabs-citizen)/reported-emergency')} /></Card>}
+    </Section>
+    <Section title="Before you report"><View style={styles.guidance}><Card><Clock3 size={22} color={colors.info} /><Text style={styles.guidanceTitle}>Move to safety</Text><Text style={styles.heroText}>Do not capture evidence if doing so places you or others at risk.</Text></Card><Card><Phone size={22} color={colors.info} /><Text style={styles.guidanceTitle}>Use local services</Text><Text style={styles.heroText}>Call a verified local emergency service when voice assistance is urgent.</Text><Button variant="quiet" label="Open phone" onPress={() => Linking.openURL('tel:')} /></Card></View></Section>
+  </Screen>;
 }
 
-export default React.memo(CitizenEmergency);
+const styles = StyleSheet.create({ hero: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.lg, padding: space.xl }, heroIcon: { width: 56, height: 56, borderRadius: radius.lg, backgroundColor: colors.brandSoft, alignItems: 'center', justifyContent: 'center' }, heroCopy: { flex: 1, minWidth: 220 }, heroTitle: { ...type.title, color: colors.ink }, heroText: { ...type.body, color: colors.muted, marginTop: space.xs }, calm: { flexDirection: 'row', alignItems: 'center', gap: space.md }, calmTitle: { ...type.heading, color: colors.ink }, guidance: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg }, guidanceTitle: { ...type.heading, color: colors.ink, marginTop: space.md } });

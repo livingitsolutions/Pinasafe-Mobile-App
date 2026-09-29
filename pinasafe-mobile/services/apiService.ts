@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isClientRuntime } from '@/utils/clientRuntime';
 import { Platform } from 'react-native';
 
-interface APIResponse<T = any> {
+interface APIResponse<T = unknown> {
   data?: T;
   error?: string;
   message?: string;
@@ -86,6 +86,18 @@ export type EvidenceUploadResult =
   | EvidenceClassification
   | { accepted: true; evidenceId: string; classification: EvidenceClassification };
 
+export interface PrivateEvidenceItem {
+  id: string;
+  url: string;
+  mimeType: 'image/jpeg';
+  byteSize: number;
+  width: number;
+  height: number;
+  classification: { label: 'fire' | 'road'; confidence: number | null; caption: string | null };
+  createdAt: string;
+  expiresIn: number;
+}
+
 class APIService {
   private token: string | null = null;
   private sessionExpiredListener: SessionExpiredListener | null = null;
@@ -144,18 +156,15 @@ class APIService {
       ...options,
     };
 
-    console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`);
-
     let response: Response;
     try {
       response = await fetch(url, config);
     } catch (error) {
-      console.error('❌ Network Error:', error);
       throw new ApiError(0, 'Network error. Please check your connection.');
     }
 
     const responseText = await response.text();
-    let data: any;
+    let data: unknown;
     try {
       data = responseText ? JSON.parse(responseText) : undefined;
     } catch {
@@ -163,21 +172,18 @@ class APIService {
     }
 
     if (!response.ok) {
-      console.error(`❌ API Error: ${response.status}`);
-
       if (response.status === 401 && hadToken && !PUBLIC_ENDPOINTS.has(endpoint)) {
         await this.handleSessionExpired();
       }
 
       const safeMessage =
-        (typeof data?.error === 'string' && data.error) ||
-        (typeof data?.message === 'string' && data.message) ||
+        (typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' && data.error) ||
+        (typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string' && data.message) ||
         `Request failed with status ${response.status}`;
       throw new ApiError(response.status, safeMessage);
     }
 
-    console.log(`✅ API Success: ${options.method || 'GET'} ${endpoint}`);
-    return { data };
+    return { data: data as T };
   }
 
   async get<T = any>(endpoint: string): Promise<APIResponse<T>> {
@@ -338,9 +344,17 @@ class APIService {
     });
   }
 
-  async getEmergencyReports(filters: any = {}): Promise<APIResponse<any[]>> {
-    const params = new URLSearchParams(filters);
+  async getEmergencyReports(filters: Record<string, string | number | boolean | undefined> = {}): Promise<APIResponse<{ data: any[] }>> {
+    const params = new URLSearchParams(Object.entries(filters).filter((entry): entry is [string, string | number | boolean] => entry[1] !== undefined).map(([key, value]) => [key, String(value)]));
     return this.request(`/emergency-reports?${params}`);
+  }
+
+  async getEmergencyReport(reportId: string): Promise<APIResponse<{ data: any }>> {
+    return this.request(`/emergency-reports/${reportId}`);
+  }
+
+  async getReportEvidence(reportId: string): Promise<APIResponse<{ data: PrivateEvidenceItem[] }>> {
+    return this.request(`/evidence/reports/${reportId}`);
   }
 
   async updateEmergencyReportStatus(
@@ -391,14 +405,14 @@ class APIService {
     location?: string;
     outcome?: string;
   }): Promise<APIResponse<any>> {
-    return this.request('/emergency-calls', {
+    return this.request('/emergency-reports/calls', {
       method: 'POST',
       body: JSON.stringify(callData),
     });
   }
 
   async getEmergencyCallsByUser(): Promise<APIResponse<any[]>> {
-    return this.request('/emergency-calls/user');
+    return this.request('/emergency-reports/calls/user');
   }
 
   // System alerts methods
@@ -559,12 +573,12 @@ class APIService {
   }
 
   // Organization methods
-  async getOrganizationReadiness(): Promise<APIResponse<any[]>> {
+  async getOrganizationReadiness(): Promise<APIResponse<{ data: any[] }>> {
     return this.request('/organizations/readiness');
   }
 
   // Team management methods
-  async getTeams(): Promise<APIResponse<any[]>> {
+  async getTeams(): Promise<APIResponse<{ data: any[] }>> {
     return this.request('/teams');
   }
 

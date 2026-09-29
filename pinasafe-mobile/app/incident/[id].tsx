@@ -1,0 +1,77 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Image, Linking, StyleSheet, Text, View } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { ArrowLeft, MapPin, RefreshCw, ShieldCheck } from 'lucide-react-native';
+import { useAuth } from '@/contexts/AuthContext';
+import { apiService, isApiError, PrivateEvidenceItem } from '@/services/apiService';
+import { ActionBar, Banner, Button, Card, DetailItem, EmptyState, ErrorState, IconButton, LoadingState, PageHeader, Priority, Screen, Section, StatusBadge, TypeBadge } from '@/components/ui';
+import { colors, radius, space, type } from '@/theme/tokens';
+
+type Report = {
+  id: string; type: string; description: string; location: string; priority: string; status: 'pending' | 'dispatched' | 'responding' | 'resolved';
+  created_at?: string; updated_at?: string; resolved_at?: string; assigned_team?: { id: string; name: string }; assigned_team_id?: string;
+  coordinates?: { latitude: number; longitude: number }; reporter_name?: string; reporter_phone?: string;
+};
+
+export default function IncidentDetail() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { user } = useAuth();
+  const [report, setReport] = useState<Report | null>(null);
+  const [evidence, setEvidence] = useState<PrivateEvidenceItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [evidenceError, setEvidenceError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    setLoading(true); setError(''); setEvidenceError('');
+    try {
+      const [reportResponse, evidenceResponse] = await Promise.allSettled([apiService.getEmergencyReport(id), apiService.getReportEvidence(id)]);
+      if (reportResponse.status === 'rejected') throw reportResponse.reason;
+      setReport(reportResponse.value.data?.data || null);
+      if (evidenceResponse.status === 'fulfilled') setEvidence(evidenceResponse.value.data?.data || []);
+      else setEvidenceError(isApiError(evidenceResponse.reason) && evidenceResponse.reason.status === 403 ? 'Evidence is restricted for this assignment.' : 'Evidence could not be loaded. Try refreshing the signed link.');
+    } catch (cause) {
+      setError(isApiError(cause) && cause.status === 403 ? 'You no longer have access to this incident.' : 'The incident could not be loaded.');
+    } finally { setLoading(false); }
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+  const nextStatus = useMemo(() => report?.status === 'dispatched' ? 'responding' : report?.status === 'responding' ? 'resolved' : null, [report?.status]);
+
+  const advance = async () => {
+    if (!report || !nextStatus || actionLoading) return;
+    setActionLoading(true);
+    try {
+      await apiService.updateResponderLifecycleStatus(report.id, nextStatus);
+      await load();
+    } catch (cause) {
+      if (isApiError(cause) && cause.status === 409) { setError('Incident state changed. The latest state has been loaded.'); await load(); }
+      else if (isApiError(cause) && cause.status === 403) setError('Your team is not authorized for this action.');
+      else setError('The lifecycle action could not be completed.');
+    } finally { setActionLoading(false); }
+  };
+
+  if (loading) return <Screen><PageHeader eyebrow="Incident record" title="Loading incident" /><LoadingState rows={4} /></Screen>;
+  if (error && !report) return <Screen><PageHeader title="Incident unavailable" action={<IconButton label="Go back" onPress={router.back}><ArrowLeft size={20} color={colors.ink} /></IconButton>} /><ErrorState message={error} onRetry={load} /></Screen>;
+  if (!report) return <Screen><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
+
+  return <Screen>
+    <PageHeader eyebrow="Incident detail" title={report.type === 'fire' ? 'Fire incident' : 'Road incident'} description={`Reference ${report.id.slice(0, 8).toUpperCase()}`} action={<IconButton label="Go back" onPress={router.back}><ArrowLeft size={20} color={colors.ink} /></IconButton>} />
+    {error ? <Banner title="Action needs attention" message={error} tone="warning" /> : null}
+    <Card tone={report.priority === 'critical' ? 'critical' : 'default'}>
+      <View style={styles.badges}><TypeBadge value={report.type} /><StatusBadge value={report.status} /><Priority value={report.priority} /></View>
+      <Text style={styles.description}>{report.description}</Text>
+      <View style={styles.location}><MapPin size={20} color={colors.brand} /><Text style={styles.locationText}>{report.location}</Text></View>
+      <View style={styles.details}><DetailItem label="Reported" value={report.created_at ? new Date(report.created_at).toLocaleString() : undefined} /><DetailItem label="Assigned team" value={report.assigned_team?.name} /><DetailItem label="Last updated" value={report.updated_at ? new Date(report.updated_at).toLocaleString() : undefined} /></View>
+      {report.coordinates ? <Button variant="secondary" label="Open location in maps" onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${report.coordinates?.latitude}&mlon=${report.coordinates?.longitude}#map=17/${report.coordinates?.latitude}/${report.coordinates?.longitude}`)} icon={<MapPin size={18} color={colors.ink} />} /> : <Banner title="Coordinates unavailable" message="No map location was submitted with this incident." tone="warning" />}
+    </Card>
+    <Section title="Evidence" description="Private evidence links expire after five minutes." action={<IconButton label="Refresh evidence" onPress={load}><RefreshCw size={18} color={colors.ink} /></IconButton>}>
+      {evidenceError ? <ErrorState message={evidenceError} onRetry={load} /> : evidence.length === 0 ? <EmptyState title="No evidence available" message="No accepted evidence is attached to this report." /> : <View style={styles.evidenceGrid}>{evidence.map(item => <Card key={item.id} style={styles.evidenceCard}><Image accessibilityLabel={`Accepted ${item.classification.label} evidence`} source={{ uri: item.url }} resizeMode="cover" style={styles.image} /><View style={styles.evidenceMeta}><ShieldCheck size={18} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.evidenceTitle}>Server-verified {item.classification.label}</Text><Text style={styles.caption}>{item.classification.confidence == null ? 'Classification accepted' : `${Math.round(item.classification.confidence * 100)}% confidence`} · {item.width}×{item.height}</Text></View></View></Card>)}</View>}
+    </Section>
+    {user?.role === 'responder' && nextStatus ? <ActionBar><Button label={nextStatus === 'responding' ? 'Start responding' : 'Mark resolved'} onPress={advance} loading={actionLoading} /></ActionBar> : null}
+  </Screen>;
+}
+
+const styles = StyleSheet.create({ badges: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, alignItems: 'center' }, description: { ...type.heading, color: colors.ink, marginVertical: space.lg }, location: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceAlt }, locationText: { ...type.body, color: colors.ink, flex: 1 }, details: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xl, marginVertical: space.lg }, evidenceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg }, evidenceCard: { width: '100%', maxWidth: 520, padding: 0, overflow: 'hidden' }, image: { width: '100%', aspectRatio: 16 / 10, backgroundColor: colors.surfaceAlt }, evidenceMeta: { flexDirection: 'row', gap: space.sm, padding: space.lg }, evidenceTitle: { ...type.label, color: colors.ink }, caption: { ...type.caption, color: colors.muted, marginTop: 2 } });

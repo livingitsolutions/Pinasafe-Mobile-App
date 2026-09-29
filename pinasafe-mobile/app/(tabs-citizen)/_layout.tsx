@@ -19,13 +19,15 @@ export default function CitizenTabLayout() {
           backgroundColor: '#FFFFFF',
           borderTopColor: '#E5E7EB',
           borderTopWidth: 1,
+          height: 68,
+          paddingBottom: 8,
         },
       }}
     >
       <Tabs.Screen
         name="emergency-main"
         options={{
-          title: 'Emergency',
+          title: 'Report',
           tabBarIcon: ({ size, color }) => (
             <Phone size={size} color={color} strokeWidth={1.5} />
           ),

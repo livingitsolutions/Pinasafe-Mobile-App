@@ -3,7 +3,7 @@ import { resolveRoleRoute } from '@/utils/roleRouting';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Redirect, router } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
 import OnboardingScreen from '../components/OnboardingScreen';
 import SplashScreen from '../components/SplashScreen';
 
