@@ -552,13 +552,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const mapped = mapApiUser(raw);
         setAuthToken(response.data.token);
         setUser(mapped);
-        console.log('✅ User signed up and automatically signed in');
         return mapped;
       }
 
       return undefined;
     } catch (error) {
-      console.error('❌ Sign up error:', error);
       throw error;
     }
   };

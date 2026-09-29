@@ -2,7 +2,7 @@ import React from 'react';
 import ProfileScreen from '@/components/ProfileScreen';
 
 const AdminProfile: React.FC = () => {
-  return <ProfileScreen userRole="admin" />;
+  return <ProfileScreen />;
 }
 
 export default React.memo(AdminProfile);

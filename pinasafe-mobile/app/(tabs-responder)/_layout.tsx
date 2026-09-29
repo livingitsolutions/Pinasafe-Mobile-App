@@ -2,7 +2,6 @@ import { Redirect, Tabs } from 'expo-router';
 import { Radio, MapPin, Clock, Users, User } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { ActivityIndicator, View } from 'react-native';
-// import { IncidentAlertNotification } from '@/components/IncidentAlertNotification';
 
 export default function ResponderTabLayout() {
   const { user, isLoading } = useAuth();
@@ -14,19 +13,21 @@ export default function ResponderTabLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: '#059669',
-          tabBarInactiveTintColor: '#6B7280',
+          tabBarActiveTintColor: '#B42318',
+          tabBarInactiveTintColor: '#667085',
           tabBarStyle: {
             backgroundColor: '#FFFFFF',
             borderTopColor: '#E5E7EB',
             borderTopWidth: 1,
+            height: 68,
+            paddingBottom: 8,
           },
         }}
       >
         <Tabs.Screen
           name="dispatch"
           options={{
-            title: 'Dispatch',
+            title: 'Assignments',
             tabBarIcon: ({ size, color }) => (
               <Radio size={size} color={color} strokeWidth={1.5} />
             ),

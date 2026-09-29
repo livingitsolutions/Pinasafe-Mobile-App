@@ -996,11 +996,28 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { apiService } from '@/services/apiService';
-import { EmergencyEvidence, ClassificationResult } from '@/services/AIClassificationService';
 import { organizationAlertService, AlertDispatch } from '@/services/organizationAlertService';
 import { incidentClusteringService, ClusteredIncident } from '@/hooks/incidentClusteringService';
 import { reactNativeAudioAlertService } from '@/services/alertAudio';
 import { useAuth } from './AuthContext';
+
+interface ClassificationResult {
+  label: 'fire' | 'road' | 'other';
+  confidence: number;
+  status: 'valid' | 'invalid';
+  action: 'accept' | 'reject' | 'uncertain';
+  reason: string;
+  caption: string;
+  requiresManualVerification: boolean;
+}
+
+interface EmergencyEvidence {
+  photos: string[];
+  video?: string;
+  timestamp: string;
+  location: { latitude: number; longitude: number } | null;
+  address: string | null;
+}
 
 export interface EmergencyReport {
   id: string;
@@ -1015,6 +1032,10 @@ export interface EmergencyReport {
   reportedAt: string;
   responderId?: string;
   resolvedAt?: string;
+  responder_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  resolved_at?: string;
   notes?: string;
   evidence?: EmergencyEvidence;
   aiClassification?: ClassificationResult;

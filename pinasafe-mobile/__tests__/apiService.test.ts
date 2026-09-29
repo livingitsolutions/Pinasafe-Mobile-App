@@ -191,6 +191,35 @@ describe('apiService (F2 foundation)', () => {
     );
   });
 
+  test('private evidence retrieval uses the authenticated report endpoint', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { data: [{
+      id: 'evidence-1',
+      url: 'https://signed.example.test/evidence',
+      mimeType: 'image/jpeg',
+      byteSize: 8123,
+      width: 1280,
+      height: 720,
+      classification: { label: 'fire', confidence: 0.94, caption: null },
+      createdAt: '2026-09-29T00:00:00.000Z',
+      expiresIn: 300,
+    }] }));
+
+    const response = await apiService.getReportEvidence('report-1');
+
+    expect(response.data?.data[0].expiresIn).toBe(300);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://pinasafe-test-api.example.com/api/evidence/reports/report-1',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer valid-token' }) })
+    );
+  });
+
+  test('private evidence unavailability remains a structured authorization error', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(403, { error: 'You are not authorized to view this evidence' }));
+    await expect(apiService.getReportEvidence('report-2')).rejects.toMatchObject({ status: 403 });
+  });
+
   test('web evidence upload sends actual JPEG Blob bytes with the expected filename', async () => {
     apiService.setToken('valid-token');
     (global as any).window = {};
