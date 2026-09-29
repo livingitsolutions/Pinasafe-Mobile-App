@@ -1,15 +1,26 @@
 import { EvidenceClassification } from '@/services/apiService';
 
 export type IncidentType = 'road' | 'fire';
+
+export type CaptureLocation = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timestamp: number;
+  address?: string;
+};
+
 export type EvidenceItem = {
   localId: string;
   uri: string;
   status: 'uploading' | 'accepted' | 'rejected' | 'error';
   classification?: EvidenceClassification;
   reason?: string;
+  captureLocation?: CaptureLocation;
 };
 
 export const MAX_ACCEPTED_EVIDENCE = 5;
+
 export const countAcceptedEvidence = (items: EvidenceItem[]) =>
   items.filter(item => item.status === 'accepted').length;
 

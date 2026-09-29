@@ -250,7 +250,8 @@ describe('apiService (F2 foundation)', () => {
 
     const [, request] = (global.fetch as jest.Mock).mock.calls[1];
     expect(request.method).toBe('POST');
-    expect(request.headers).toEqual({});
+    expect(request.headers.Authorization).toBe('Bearer valid-token');
+    expect(request.headers['Content-Type']).toBeUndefined();
     expect(request.body).toBeInstanceOf(FormData);
 
     const uploadedImage = request.body.get('image');
@@ -295,7 +296,8 @@ describe('apiService (F2 foundation)', () => {
     const [url, request] = (global.fetch as jest.Mock).mock.calls[0];
     expect(url).toContain('/api/evidence/sessions/session-id/image');
     expect(request.method).toBe('POST');
-    expect(request.headers).toEqual({});
+    expect(request.headers.Authorization).toBe('Bearer valid-token');
+    expect(request.headers['Content-Type']).toBeUndefined();
     expect(request.body).toBeInstanceOf(FormData);
 
     appendSpy.mockRestore();
@@ -407,6 +409,69 @@ describe('apiService (F2 foundation)', () => {
     const [, request] = (global.fetch as jest.Mock).mock.calls[0];
     expect(request.method).toBe('POST');
     expect(request.body).toBeInstanceOf(FormData);
-    expect(request.headers).toEqual({});
+    expect(request.headers.Authorization).toBe('Bearer valid-token');
+    expect(request.headers['Content-Type']).toBeUndefined();
+  });
+
+  test('REGRESSION: headers: {} cannot strip Authorization from an authenticated request', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+
+    await apiService.post('/teams', { name: 'Test' });
+
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.headers.Authorization).toBe('Bearer valid-token');
+    expect(request.headers['Content-Type']).toBe('application/json');
+  });
+
+  test('REGRESSION: FormData upload preserves Authorization and omits application/json Content-Type', async () => {
+    apiService.setToken('valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: { accepted: true, evidenceId: 'ev-1', classification: { label: 'fire', confidence: 0.95, status: 'valid', action: 'accept', reason: null, caption: null } } }));
+
+    await apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' });
+
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.headers.Authorization).toBe('Bearer valid-token');
+    expect(request.headers['Content-Type']).toBeUndefined();
+    expect(request.body).toBeInstanceOf(FormData);
+  });
+
+  test('REGRESSION: ordinary JSON requests still send application/json Content-Type', async () => {
+    apiService.setToken('valid-token');
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+
+    await apiService.post('/teams', { name: 'Test' });
+
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.headers['Content-Type']).toBe('application/json');
+    expect(request.headers.Authorization).toBe('Bearer valid-token');
+  });
+
+  test('REGRESSION: genuine authenticated 401 still expires the session', async () => {
+    apiService.setToken('valid-token');
+    await AsyncStorage.setItem('auth_token', 'valid-token');
+    const sessionExpired = jest.fn();
+    apiService.onSessionExpired(sessionExpired);
+
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(401, { error: 'Invalid token' }));
+
+    await expect(apiService.get('/users/profile')).rejects.toThrow('Invalid token');
+    expect(apiService.getToken()).toBeNull();
+    expect(await AsyncStorage.getItem('auth_token')).toBeNull();
+    expect(sessionExpired).toHaveBeenCalledTimes(1);
+  });
+
+  test('REGRESSION: evidence upload 503 (classifier unavailable) does not log the citizen out', async () => {
+    apiService.setToken('valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    const sessionExpired = jest.fn();
+    apiService.onSessionExpired(sessionExpired);
+
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(503, { error: 'Classification service unavailable' }));
+
+    await expect(apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' })).rejects.toMatchObject({ status: 503 });
+    expect(apiService.getToken()).toBe('valid-token');
+    expect(sessionExpired).not.toHaveBeenCalled();
   });
 });

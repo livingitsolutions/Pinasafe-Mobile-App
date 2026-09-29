@@ -147,13 +147,15 @@ class APIService {
     const hadToken = Boolean(this.token);
     const url = `${this.getBaseURL()}/api${endpoint}`;
 
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+
     const config: RequestInit = {
+      ...options,
       headers: {
-        'Content-Type': 'application/json',
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...(this.token && { Authorization: `Bearer ${this.token}` }),
         ...options.headers,
       },
-      ...options,
     };
 
     let response: Response;
@@ -339,7 +341,6 @@ class APIService {
 
     return this.request(`/evidence/sessions/${sessionId}/image`, {
       method: 'POST',
-      headers: {},
       body: formData,
     });
   }
