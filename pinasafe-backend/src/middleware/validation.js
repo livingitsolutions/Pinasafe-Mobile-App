@@ -302,7 +302,7 @@ const validateClusterUpdate = [
 // Alert validation
 const validateAlert = [
   body('type')
-    .isIn(['weather', 'emergency', 'community', 'system'])
+    .isIn(['weather', 'emergency', 'community', 'system', 'fire', 'safety'])
     .withMessage('Invalid alert type'),
   body('title')
     .trim()

@@ -41,8 +41,21 @@ const buildQuery = (payload) => ({
   single: jest.fn().mockResolvedValue(payload),
   update: jest.fn().mockReturnThis(),
   delete: jest.fn().mockReturnThis(),
-  insert: jest.fn().mockReturnThis()
+  insert: jest.fn().mockReturnThis(),
+  or: jest.fn().mockReturnThis()
 });
+
+const buildApp = (user, mockSupabase) => {
+  getClient.mockReturnValue(mockSupabase);
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => {
+    req.user = user;
+    next();
+  });
+  app.use('/alerts', alertsRouter);
+  return app;
+};
 
 describe('Authorization boundary checks', () => {
   beforeEach(() => {
@@ -288,132 +301,226 @@ describe('Authorization boundary checks', () => {
     expect(response.status).toBe(403);
   });
 
-  test('same-org admin can dismiss an alert matching their org type', async () => {
-    const alertRow = { id: '123e4567-e89b-12d3-a456-426614174013', type: 'fire', is_active: true };
-    const orgRow = { type: 'fire' };
-    const updateResult = { error: null };
-    const mockSupabase = {
-      from: jest.fn()
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          maybeSingle: jest.fn().mockResolvedValue({ data: alertRow, error: null }),
-        })
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          maybeSingle: jest.fn().mockResolvedValue({ data: orgRow, error: null }),
-        })
-        .mockReturnValueOnce({
-          update: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockResolvedValue(updateResult),
-        }),
-    };
-    getClient.mockReturnValue(mockSupabase);
+  // --- Organization-type alert scope tests ---
 
-    const app = express();
-    app.use(express.json());
-    app.use((req, res, next) => {
-      req.user = { id: 'admin-1', role: 'admin', organization_id: 'fire-org-1' };
-      next();
-    });
-    app.use('/alerts', alertsRouter);
+  describe('Organization-type alert scope', () => {
+    const ALERT_ID = '123e4567-e89b-12d3-a456-426614174013';
 
-    const response = await request(app)
-      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
-
-    expect(response.status).toBe(200);
-    expect(response.body.message).toBe('Alert dismissed successfully');
-  });
-
-  test('cross-org admin cannot dismiss an alert of a different org type', async () => {
-    const alertRow = { id: '123e4567-e89b-12d3-a456-426614174013', type: 'fire', is_active: true };
-    const orgRow = { type: 'rescue' };
-    const mockSupabase = {
-      from: jest.fn()
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          maybeSingle: jest.fn().mockResolvedValue({ data: alertRow, error: null }),
-        })
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          maybeSingle: jest.fn().mockResolvedValue({ data: orgRow, error: null }),
-        }),
-    };
-    getClient.mockReturnValue(mockSupabase);
-
-    const app = express();
-    app.use(express.json());
-    app.use((req, res, next) => {
-      req.user = { id: 'admin-1', role: 'admin', organization_id: 'rescue-org-1' };
-      next();
-    });
-    app.use('/alerts', alertsRouter);
-
-    const response = await request(app)
-      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
-
-    expect(response.status).toBe(403);
-    expect(mockSupabase.from).toHaveBeenCalledTimes(2);
-  });
-
-  test('nonexistent alert returns 404 without mutation', async () => {
-    const mockSupabase = {
-      from: jest.fn().mockReturnValue({
+    function buildOrgQuery(orgType) {
+      return {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
-        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
-      }),
-    };
-    getClient.mockReturnValue(mockSupabase);
+        maybeSingle: jest.fn().mockResolvedValue({ data: { type: orgType }, error: null }),
+      };
+    }
 
-    const app = express();
-    app.use(express.json());
-    app.use((req, res, next) => {
-      req.user = { id: 'admin-1', role: 'admin', organization_id: 'org-1' };
-      next();
+    function buildAlertFetchQuery(alertRow) {
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: alertRow, error: null }),
+      };
+    }
+
+    function buildInsertQuery(result) {
+      return {
+        insert: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        single: jest.fn().mockResolvedValue(result),
+      };
+    }
+
+    test('1. fire admin can create fire alert', async () => {
+      const insertQuery = buildInsertQuery({ data: { id: 'new-alert', type: 'fire' }, error: null });
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildOrgQuery('fire'))
+          .mockReturnValueOnce(insertQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'fire-org-1' }, mockSupabase);
+
+      const response = await request(app)
+        .post('/alerts')
+        .send({ type: 'fire', title: 'Wildfire warning', description: 'Hillside fire spreading', priority: 'high', location: 'Brgy. San Roque' });
+
+      expect(response.status).toBe(201);
+      expect(insertQuery.insert).toHaveBeenCalled();
     });
-    app.use('/alerts', alertsRouter);
 
-    const response = await request(app)
-      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
+    test('2. fire admin cannot create safety alert and INSERT is not called', async () => {
+      const insertQuery = buildInsertQuery({ data: { id: 'new-alert', type: 'safety' }, error: null });
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildOrgQuery('fire'))
+          .mockReturnValueOnce(insertQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'fire-org-1' }, mockSupabase);
 
-    expect(response.status).toBe(404);
-    expect(mockSupabase.from).toHaveBeenCalledTimes(1);
-  });
+      const response = await request(app)
+        .post('/alerts')
+        .send({ type: 'safety', title: 'Flood warning', description: 'River rising rapidly', priority: 'high', location: 'Brgy. San Roque' });
 
-  test('unauthorized dismissal does not mutate alert', async () => {
-    const alertRow = { id: '123e4567-e89b-12d3-a456-426614174013', type: 'fire', is_active: true };
-    const orgRow = { type: 'rescue' };
-    const mockSupabase = {
-      from: jest.fn()
-        .mockReturnValueOnce({
+      expect(response.status).toBe(403);
+      expect(insertQuery.insert).not.toHaveBeenCalled();
+    });
+
+    test('3. rescue/MDRRMO admin can create safety alert', async () => {
+      const insertQuery = buildInsertQuery({ data: { id: 'new-alert', type: 'safety' }, error: null });
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildOrgQuery('rescue'))
+          .mockReturnValueOnce(insertQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'rescue-org-1' }, mockSupabase);
+
+      const response = await request(app)
+        .post('/alerts')
+        .send({ type: 'safety', title: 'Flood warning', description: 'River rising rapidly', priority: 'high', location: 'Brgy. San Roque' });
+
+      expect(response.status).toBe(201);
+      expect(insertQuery.insert).toHaveBeenCalled();
+    });
+
+    test('4. rescue/MDRRMO admin cannot create fire alert and INSERT is not called', async () => {
+      const insertQuery = buildInsertQuery({ data: { id: 'new-alert', type: 'fire' }, error: null });
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildOrgQuery('rescue'))
+          .mockReturnValueOnce(insertQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'rescue-org-1' }, mockSupabase);
+
+      const response = await request(app)
+        .post('/alerts')
+        .send({ type: 'fire', title: 'Wildfire warning', description: 'Hillside fire spreading', priority: 'high', location: 'Brgy. San Roque' });
+
+      expect(response.status).toBe(403);
+      expect(insertQuery.insert).not.toHaveBeenCalled();
+    });
+
+    test('5. matching organization-type user can dismiss matching alert', async () => {
+      const alertRow = { id: ALERT_ID, type: 'fire', is_active: true };
+      const updateResult = { error: null };
+      const updateQuery = {
+        update: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockResolvedValue(updateResult),
+      };
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildAlertFetchQuery(alertRow))
+          .mockReturnValueOnce(buildOrgQuery('fire'))
+          .mockReturnValueOnce(updateQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'fire-org-1' }, mockSupabase);
+
+      const response = await request(app).put(`/alerts/${ALERT_ID}/dismiss`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.message).toBe('Alert dismissed successfully');
+    });
+
+    test('6. mismatched organization-type user receives 403 and UPDATE is not called', async () => {
+      const alertRow = { id: ALERT_ID, type: 'fire', is_active: true };
+      const updateQuery = {
+        update: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      };
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildAlertFetchQuery(alertRow))
+          .mockReturnValueOnce(buildOrgQuery('rescue'))
+          .mockReturnValueOnce(updateQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'rescue-org-1' }, mockSupabase);
+
+      const response = await request(app).put(`/alerts/${ALERT_ID}/dismiss`);
+
+      expect(response.status).toBe(403);
+      expect(updateQuery.update).not.toHaveBeenCalled();
+    });
+
+    test('7. matching organization-type user can GET matching alert by ID', async () => {
+      const alertRow = { id: ALERT_ID, type: 'safety', is_active: true, title: 'Flood warning' };
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildAlertFetchQuery(alertRow))
+          .mockReturnValueOnce(buildOrgQuery('rescue')),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'rescue-org-1' }, mockSupabase);
+
+      const response = await request(app).get(`/alerts/${ALERT_ID}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.type).toBe('safety');
+    });
+
+    test('8. mismatched organization-type user cannot GET alert by ID', async () => {
+      const alertRow = { id: ALERT_ID, type: 'fire', is_active: true, title: 'Wildfire warning' };
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildAlertFetchQuery(alertRow))
+          .mockReturnValueOnce(buildOrgQuery('rescue')),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'rescue-org-1' }, mockSupabase);
+
+      const response = await request(app).get(`/alerts/${ALERT_ID}`);
+
+      expect(response.status).toBe(403);
+    });
+
+    test('9. missing organization assignment fails before mutation', async () => {
+      const alertRow = { id: ALERT_ID, type: 'fire', is_active: true };
+      const updateQuery = {
+        update: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      };
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildAlertFetchQuery(alertRow))
+          .mockReturnValueOnce(updateQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: null }, mockSupabase);
+
+      const response = await request(app).put(`/alerts/${ALERT_ID}/dismiss`);
+
+      expect(response.status).toBe(400);
+      expect(updateQuery.update).not.toHaveBeenCalled();
+    });
+
+    test('10. nonexistent alert dismissal remains non-mutating', async () => {
+      const mockSupabase = {
+        from: jest.fn().mockReturnValue({
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
-          maybeSingle: jest.fn().mockResolvedValue({ data: alertRow, error: null }),
-        })
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          maybeSingle: jest.fn().mockResolvedValue({ data: orgRow, error: null }),
+          maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
         }),
-    };
-    getClient.mockReturnValue(mockSupabase);
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'fire-org-1' }, mockSupabase);
 
-    const app = express();
-    app.use(express.json());
-    app.use((req, res, next) => {
-      req.user = { id: 'responder-1', role: 'responder', organization_id: 'rescue-org-1' };
-      next();
+      const response = await request(app).put(`/alerts/${ALERT_ID}/dismiss`);
+
+      expect(response.status).toBe(404);
+      expect(mockSupabase.from).toHaveBeenCalledTimes(1);
     });
-    app.use('/alerts', alertsRouter);
 
-    const response = await request(app)
-      .put('/alerts/123e4567-e89b-12d3-a456-426614174013/dismiss');
+    test('11. unsupported organization type fails closed', async () => {
+      const alertRow = { id: ALERT_ID, type: 'fire', is_active: true };
+      const updateQuery = {
+        update: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockResolvedValue({ error: null }),
+      };
+      const mockSupabase = {
+        from: jest.fn()
+          .mockReturnValueOnce(buildAlertFetchQuery(alertRow))
+          .mockReturnValueOnce(buildOrgQuery('unknown_type'))
+          .mockReturnValueOnce(updateQuery),
+      };
+      const app = buildApp({ id: 'admin-1', role: 'admin', organization_id: 'unknown-org-1' }, mockSupabase);
 
-    expect(response.status).toBe(403);
-    expect(mockSupabase.from).toHaveBeenCalledTimes(2);
+      const response = await request(app).put(`/alerts/${ALERT_ID}/dismiss`);
+
+      expect(response.status).toBe(403);
+      expect(updateQuery.update).not.toHaveBeenCalled();
+    });
   });
 });
