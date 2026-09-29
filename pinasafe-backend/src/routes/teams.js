@@ -51,9 +51,33 @@ router.get('/', authenticateToken, requireRole(['admin', 'responder', 'super_adm
         `)
         .eq('team_id', team.id);
 
+      let enrichedMembers = members || [];
+      if (enrichedMembers.length > 0) {
+        const memberUserIds = enrichedMembers.map(m => m.user_id).filter(Boolean);
+        if (memberUserIds.length > 0) {
+          const { data: personnelRecords } = await supabase
+            .from('personnel')
+            .select('user_id, personnel_role, is_active')
+            .in('user_id', memberUserIds);
+
+          const personnelByUserId = new Map(
+            (personnelRecords || []).map(p => [p.user_id, p])
+          );
+
+          enrichedMembers = enrichedMembers.map(member => {
+            const personnel = personnelByUserId.get(member.user_id);
+            return {
+              ...member,
+              personnel_role: personnel?.personnel_role ?? null,
+              is_active: personnel?.is_active ?? false,
+            };
+          });
+        }
+      }
+
       return {
         ...team,
-        members: members || []
+        members: enrichedMembers
       };
     }));
 
@@ -515,10 +539,34 @@ router.get('/:id', authenticateToken, requireRole(['admin', 'responder', 'super_
       `)
       .eq('team_id', team.id);
 
+    let enrichedMembers = members || [];
+    if (enrichedMembers.length > 0) {
+      const memberUserIds = enrichedMembers.map(m => m.user_id).filter(Boolean);
+      if (memberUserIds.length > 0) {
+        const { data: personnelRecords } = await supabase
+          .from('personnel')
+          .select('user_id, personnel_role, is_active')
+          .in('user_id', memberUserIds);
+
+        const personnelByUserId = new Map(
+          (personnelRecords || []).map(p => [p.user_id, p])
+        );
+
+        enrichedMembers = enrichedMembers.map(member => {
+          const personnel = personnelByUserId.get(member.user_id);
+          return {
+            ...member,
+            personnel_role: personnel?.personnel_role ?? null,
+            is_active: personnel?.is_active ?? false,
+          };
+        });
+      }
+    }
+
     res.json({
       data: {
         ...team,
-        members: members || []
+        members: enrichedMembers
       }
     });
 
