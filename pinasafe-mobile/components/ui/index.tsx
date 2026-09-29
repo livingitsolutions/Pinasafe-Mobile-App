@@ -20,8 +20,8 @@ export function Card({ children, style, tone = 'default' }: { children: ReactNod
   return <View style={[styles.card, tone === 'critical' && styles.cardCritical, tone === 'muted' && styles.cardMuted, style]}>{children}</View>;
 }
 
-export function MetricCard({ label, value, hint, tone = 'default' }: { label: string; value: string | number; hint?: string; tone?: 'default' | 'critical' | 'success' }) {
-  return <Card style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={[styles.metricValue, tone === 'critical' && { color: colors.critical }, tone === 'success' && { color: colors.success }]}>{value}</Text>{hint ? <Text style={styles.caption}>{hint}</Text> : null}</Card>;
+export function MetricCard({ label, value, hint, tone = 'default' }: { label: string; value: string | number; hint?: string; tone?: 'default' | 'warning' | 'critical' | 'success' }) {
+  return <Card style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={[styles.metricValue, tone === 'critical' && { color: colors.critical }, tone === 'warning' && { color: colors.warning }, tone === 'success' && { color: colors.success }]}>{value}</Text>{hint ? <Text style={styles.caption}>{hint}</Text> : null}</Card>;
 }
 
 export function Button({ label, onPress, variant = 'primary', disabled, loading, icon }: { label: string; onPress: () => void; variant?: 'primary' | 'secondary' | 'danger' | 'quiet'; disabled?: boolean; loading?: boolean; icon?: ReactNode }) {
