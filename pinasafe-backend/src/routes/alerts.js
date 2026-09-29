@@ -9,35 +9,13 @@ const router = express.Router();
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { user } = req;
     const supabase = getClient();
 
-    let query = supabase
+    const { data: alerts, error } = await supabase
       .from('system_alerts')
       .select('*')
       .eq('is_active', true)
-      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
-
-    if (user.role === 'responder' || user.role === 'admin') {
-      if (!user.organization_id) {
-        return res.status(400).json({ error: 'User not assigned to an organization' });
-      }
-
-      const { data: orgData, error: orgError } = await supabase
-        .from('organizations')
-        .select('type')
-        .eq('id', user.organization_id)
-        .maybeSingle();
-
-      if (orgError || !orgData) {
-        return res.status(500).json({ error: 'Failed to fetch organization details' });
-      }
-
-      const alertType = orgData.type === 'fire' ? 'fire' : 'safety';
-      query = query.eq('type', alertType);
-    }
-
-    const { data: alerts, error } = await query
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       .order('priority', { ascending: false })
       .order('created_at', { ascending: false });
 
@@ -66,8 +44,8 @@ router.post('/', authenticateToken, requireRole(['responder', 'admin']), validat
       expiresAt
     } = req.body;
 
-    const alertId = uuidv4();
     const supabase = getClient();
+    const alertId = uuidv4();
 
     const { data: alert, error } = await supabase
       .from('system_alerts')
@@ -104,17 +82,34 @@ router.post('/', authenticateToken, requireRole(['responder', 'admin']), validat
 router.put('/:id/dismiss', authenticateToken, requireRole(['responder', 'admin']), validateUUID('id'), async (req, res) => {
   try {
     const { id } = req.params;
+    const { user } = req;
     const supabase = getClient();
 
-    const { data: alert, error } = await supabase
+    const { data: alert, error: fetchError } = await supabase
       .from('system_alerts')
-      .update({ is_active: false })
+      .select('id, created_by, is_active')
       .eq('id', id)
-      .select()
       .maybeSingle();
 
-    if (!alert) {
+    if (fetchError || !alert) {
       return res.status(404).json({ error: 'Alert not found' });
+    }
+
+    const isCreator = alert.created_by === user.id;
+    const isAdmin = user.role === 'admin';
+
+    if (!isCreator && !isAdmin) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+
+    const { error: updateError } = await supabase
+      .from('system_alerts')
+      .update({ is_active: false })
+      .eq('id', id);
+
+    if (updateError) {
+      safeLogger.error('alerts.dismiss_failed');
+      return res.status(500).json({ error: 'Failed to dismiss alert' });
     }
 
     res.json({ message: 'Alert dismissed successfully' });

@@ -46,7 +46,8 @@ const buildQuery = (payload) => ({
   eq: jest.fn().mockReturnThis(),
   update: jest.fn().mockReturnThis(),
   maybeSingle: jest.fn().mockResolvedValue(payload),
-  single: jest.fn().mockResolvedValue(payload)
+  single: jest.fn().mockResolvedValue(payload),
+  limit: jest.fn().mockResolvedValue(payload)
 });
 
 // Supplies mocked `.from()` query builders in call order; throws if the route
@@ -104,14 +105,15 @@ describe('Emergency dispatch and response lifecycle (B6.12)', () => {
   });
 
   describe('POST /emergency-reports/:id/assign-team', () => {
-    test('A. admin assigns active same-org team to pending report', async () => {
+    test('A. admin assigns active same-org team with rescue members to pending report', async () => {
       const reportQuery = buildQuery({ data: pendingReport(), error: null });
       const teamQuery = buildQuery({ data: { id: TEAM_ID }, error: null });
+      const personnelQuery = buildQuery({ data: [{ id: 'personnel-1' }], error: null });
       const updateQuery = buildQuery({
         data: { id: REPORT_ID, organization_id: ORG_ID, status: 'dispatched', assigned_team_id: TEAM_ID },
         error: null
       });
-      mockFromSequence([reportQuery, teamQuery, updateQuery]);
+      mockFromSequence([reportQuery, teamQuery, personnelQuery, updateQuery]);
 
       const response = await request(buildApp(admin))
         .post(`/emergency-reports/${REPORT_ID}/assign-team`)
@@ -172,8 +174,9 @@ describe('Emergency dispatch and response lifecycle (B6.12)', () => {
     test('F. assignment update constrained by pending state fails safely on concurrent change', async () => {
       const reportQuery = buildQuery({ data: pendingReport(), error: null });
       const teamQuery = buildQuery({ data: { id: TEAM_ID }, error: null });
+      const personnelQuery = buildQuery({ data: [{ id: 'personnel-1' }], error: null });
       const updateQuery = buildQuery({ data: null, error: null });
-      mockFromSequence([reportQuery, teamQuery, updateQuery]);
+      mockFromSequence([reportQuery, teamQuery, personnelQuery, updateQuery]);
 
       const response = await request(buildApp(admin))
         .post(`/emergency-reports/${REPORT_ID}/assign-team`)
@@ -181,6 +184,46 @@ describe('Emergency dispatch and response lifecycle (B6.12)', () => {
 
       expect(response.status).toBe(409);
       expect(updateQuery.eq).toHaveBeenCalledWith('status', 'pending');
+    });
+
+    test('G2. team with no rescue members denied with 409', async () => {
+      const reportQuery = buildQuery({ data: pendingReport(), error: null });
+      const teamQuery = buildQuery({ data: { id: TEAM_ID }, error: null });
+      const personnelQuery = buildQuery({ data: [], error: null });
+      mockFromSequence([reportQuery, teamQuery, personnelQuery]);
+
+      const response = await request(buildApp(admin))
+        .post(`/emergency-reports/${REPORT_ID}/assign-team`)
+        .send({ teamId: TEAM_ID });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toContain('rescue members');
+    });
+
+    test('G3. team with only inactive rescue members denied with 409', async () => {
+      const reportQuery = buildQuery({ data: pendingReport(), error: null });
+      const teamQuery = buildQuery({ data: { id: TEAM_ID }, error: null });
+      const personnelQuery = buildQuery({ data: [], error: null });
+      mockFromSequence([reportQuery, teamQuery, personnelQuery]);
+
+      const response = await request(buildApp(admin))
+        .post(`/emergency-reports/${REPORT_ID}/assign-team`)
+        .send({ teamId: TEAM_ID });
+
+      expect(response.status).toBe(409);
+    });
+
+    test('G4. team with only non-rescue personnel denied with 409', async () => {
+      const reportQuery = buildQuery({ data: pendingReport(), error: null });
+      const teamQuery = buildQuery({ data: { id: TEAM_ID }, error: null });
+      const personnelQuery = buildQuery({ data: [], error: null });
+      mockFromSequence([reportQuery, teamQuery, personnelQuery]);
+
+      const response = await request(buildApp(admin))
+        .post(`/emergency-reports/${REPORT_ID}/assign-team`)
+        .send({ teamId: TEAM_ID });
+
+      expect(response.status).toBe(409);
     });
   });
 

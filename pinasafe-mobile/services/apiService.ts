@@ -421,7 +421,7 @@ class APIService {
   }
 
   async createAlert(alertData: {
-    type: 'weather' | 'emergency' | 'community' | 'system';
+    type: 'weather' | 'safety' | 'community' | 'emergency' | 'system';
     title: string;
     description: string;
     priority: 'low' | 'medium' | 'high' | 'critical';

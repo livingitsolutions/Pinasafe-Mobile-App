@@ -431,6 +431,19 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin']), valid
       return res.status(404).json({ error: 'Team not found or not in your organization' });
     }
 
+    const { data: eligibleMembers, error: memberError } = await supabase
+      .from('personnel')
+      .select('id')
+      .eq('organization_id', user.organization_id)
+      .eq('personnel_role', 'rescue_member')
+      .eq('is_active', true)
+      .eq('team_id', teamId)
+      .limit(1);
+
+    if (memberError || !eligibleMembers || eligibleMembers.length === 0) {
+      return res.status(409).json({ error: 'Team has no active rescue members available for dispatch' });
+    }
+
     const { data: updatedReport, error } = await supabase
       .from('emergency_reports')
       .update({

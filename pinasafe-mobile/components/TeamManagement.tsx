@@ -4,6 +4,7 @@ import teamService, { RescueTeam } from '@/services/teamService';
 import personnelService, { Personnel } from '@/services/personnelService';
 import { Banner, Button, Card, Dialog, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Screen, StatusBadge, TextArea } from '@/components/ui';
 import { colors, radius, space, type } from '@/theme/tokens';
+import { isTeamPresentationReady } from '@/utils/operations';
 
 export default function TeamManagement() {
   const [teams, setTeams] = useState<RescueTeam[]>([]);
@@ -18,7 +19,25 @@ export default function TeamManagement() {
   const create = async () => {
     if (!form.name.trim()) return;
     setSaving(true); setError('');
-    try { const team = await teamService.createTeam({ name: form.name, description: form.description || undefined, teamLeaderId: form.teamLeaderId || undefined }); await Promise.all(form.selected.map(userId => teamService.addTeamMember(team.id, { userId }))); setOpen(false); setForm({ name: '', description: '', teamLeaderId: '', selected: [] }); await load(); }
+    try {
+      const team = await teamService.createTeam({ name: form.name, description: form.description || undefined, teamLeaderId: form.teamLeaderId || undefined });
+      const memberResults = await Promise.allSettled(form.selected.map(userId => teamService.addTeamMember(team.id, { userId })));
+      const failures = memberResults.filter(r => r.status === 'rejected');
+      if (failures.length > 0) {
+        if (failures.length === form.selected.length) {
+          await teamService.deleteTeam(team.id).catch(() => {});
+          setError('The team could not be created. Member assignment failed for all selected members.');
+        } else {
+          setOpen(false);
+          setForm({ name: '', description: '', teamLeaderId: '', selected: [] });
+          setError(`${failures.length} of ${form.selected.length} member${failures.length === 1 ? '' : 's'} could not be assigned. The team was created with the remaining members. Add the missing members from the team list.`);
+        }
+      } else {
+        setOpen(false);
+        setForm({ name: '', description: '', teamLeaderId: '', selected: [] });
+      }
+      await load();
+    }
     catch { setError('The team could not be created. Check leader and member eligibility.'); }
     finally { setSaving(false); }
   };
@@ -26,7 +45,7 @@ export default function TeamManagement() {
   return <Screen>
     <PageHeader eyebrow="Organization" title="Response teams" description="Build active teams with eligible rescue responders before dispatch." action={<Button label="Create team" onPress={() => setOpen(true)} />} />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
-    {loading ? <LoadingState rows={3} /> : teams.length === 0 ? <EmptyState title="No active teams" message="Create a team, choose a leader, and add active rescue responders." action={<Button label="Create first team" onPress={() => setOpen(true)} />} /> : <View style={styles.grid}>{teams.map(team => { const ready = team.is_active && team.members.length > 0; return <Card key={team.id} style={styles.team}><View style={styles.head}><View style={{ flex: 1 }}><Text style={styles.name}>{team.name}</Text><Text style={styles.description}>{team.description || 'No team description'}</Text></View><StatusBadge value={ready ? 'active' : 'inactive'} /></View><View style={styles.readiness}><Text style={styles.readinessLabel}>{ready ? 'Assignment ready' : 'Not assignment ready'}</Text><Text style={styles.meta}>{team.members.length} {team.members.length === 1 ? 'member' : 'members'} · {team.team_leader?.name ? `Led by ${team.team_leader.name}` : 'No leader selected'}</Text></View>{!ready ? <Banner title="Cannot respond yet" message="Add at least one eligible active rescue responder." tone="warning" /> : null}</Card>; })}</View>}
+    {loading ? <LoadingState rows={3} /> : teams.length === 0 ? <EmptyState title="No active teams" message="Create a team, choose a leader, and add active rescue responders." action={<Button label="Create first team" onPress={() => setOpen(true)} />} /> : <View style={styles.grid}>{teams.map(team => { const ready = isTeamPresentationReady(team); return <Card key={team.id} style={styles.team}><View style={styles.head}><View style={{ flex: 1 }}><Text style={styles.name}>{team.name}</Text><Text style={styles.description}>{team.description || 'No team description'}</Text></View><StatusBadge value={ready ? 'active' : 'inactive'} /></View><View style={styles.readiness}><Text style={styles.readinessLabel}>{ready ? 'Assignment ready' : 'Not assignment ready'}</Text><Text style={styles.meta}>{team.members.length} {team.members.length === 1 ? 'member' : 'members'} · {team.team_leader?.name ? `Led by ${team.team_leader.name}` : 'No leader selected'}</Text></View>{!ready ? <Banner title="Cannot respond yet" message="Add at least one eligible active rescue responder." tone="warning" /> : null}</Card>; })}</View>}
     <Dialog visible={open} title="Create response team" onClose={() => setOpen(false)} footer={<View style={styles.actions}><Button variant="secondary" label="Cancel" onPress={() => setOpen(false)} /><Button label="Create team" onPress={create} loading={saving} disabled={!form.name.trim()} /></View>}>
       <View style={styles.form}><Field label="Team name"><Input value={form.name} onChangeText={name => setForm(value => ({ ...value, name }))} /></Field><Field label="Description"><TextArea value={form.description} onChangeText={description => setForm(value => ({ ...value, description }))} /></Field><Field label="Team leader" hint="Leader must be an active rescue responder."><View style={styles.options}>{members.map(member => <Pressable key={member.id} onPress={() => setForm(value => ({ ...value, teamLeaderId: member.user_id || '' }))} style={[styles.option, form.teamLeaderId === member.user_id && styles.optionSelected]}><Text style={styles.optionName}>{member.name}</Text></Pressable>)}</View></Field><Field label="Members" hint="Select active rescue responders."><View style={styles.options}>{members.map(member => { const id = member.user_id || ''; const selected = form.selected.includes(id); return <Pressable key={member.id} disabled={!id} onPress={() => setForm(value => ({ ...value, selected: selected ? value.selected.filter(item => item !== id) : [...value.selected, id] }))} style={[styles.option, selected && styles.optionSelected]}><Text style={styles.optionName}>{member.name}</Text></Pressable>; })}</View></Field></View>
     </Dialog>

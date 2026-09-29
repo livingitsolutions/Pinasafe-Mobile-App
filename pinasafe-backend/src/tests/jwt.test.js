@@ -169,8 +169,18 @@ describe('JWT policy', () => {
       .get('/protected')
       .set('Authorization', `Bearer ${token}`);
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
     expect(response.body).toEqual({ error: 'Token expired' });
+    expect(getClient).not.toHaveBeenCalled();
+  });
+
+  test('invalid JWT returns 401 not 403', async () => {
+    const response = await request(buildProtectedApp())
+      .get('/protected')
+      .set('Authorization', 'Bearer not-a-valid-jwt');
+
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({ error: 'Invalid token' });
     expect(getClient).not.toHaveBeenCalled();
   });
 

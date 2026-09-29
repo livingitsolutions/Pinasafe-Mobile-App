@@ -7,9 +7,33 @@ describe('operational presentation policy', () => {
     expect(hasAuthoritativeCoordinates({ latitude: 10.25, longitude: 124.75 })).toBe(true);
   });
 
-  test('inactive and empty teams are not presented as assignment ready', () => {
-    expect(isTeamPresentationReady({ is_active: false, members: [{}] })).toBe(false);
+  test('inactive team is not assignment ready', () => {
+    expect(isTeamPresentationReady({ is_active: false, members: [{ personnel_role: 'rescue_member', is_active: true }] })).toBe(false);
+  });
+
+  test('empty team is not assignment ready', () => {
     expect(isTeamPresentationReady({ is_active: true, members: [] })).toBe(false);
-    expect(isTeamPresentationReady({ is_active: true, members: [{}] })).toBe(true);
+  });
+
+  test('team with only staff members is not assignment ready', () => {
+    expect(isTeamPresentationReady({ is_active: true, members: [{ personnel_role: 'staff', is_active: true }] })).toBe(false);
+  });
+
+  test('team with inactive rescue_member is not assignment ready', () => {
+    expect(isTeamPresentationReady({ is_active: true, members: [{ personnel_role: 'rescue_member', is_active: false }] })).toBe(false);
+  });
+
+  test('team with active rescue_member is assignment ready', () => {
+    expect(isTeamPresentationReady({ is_active: true, members: [{ personnel_role: 'rescue_member', is_active: true }] })).toBe(true);
+  });
+
+  test('team with mixed members including active rescue_member is assignment ready', () => {
+    expect(isTeamPresentationReady({
+      is_active: true,
+      members: [
+        { personnel_role: 'staff', is_active: true },
+        { personnel_role: 'rescue_member', is_active: true },
+      ],
+    })).toBe(true);
   });
 });

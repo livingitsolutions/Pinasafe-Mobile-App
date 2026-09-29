@@ -152,16 +152,6 @@ router.post('/:clusterId/updates', authenticateToken, requireRole(['responder', 
       user.id
     );
 
-    await supabase
-      .from('emergency_reports')
-      .update({
-        status,
-        responder_id: user.id,
-        updated_at: new Date().toISOString()
-      })
-      .eq('cluster_id', clusterId)
-      .eq('organization_id', user.organization_id);
-
     res.status(201).json({
       message: 'Cluster update sent successfully',
       data: {
