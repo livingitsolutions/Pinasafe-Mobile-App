@@ -9,15 +9,23 @@ jest.mock('../services/AudioAlertService', () => ({ audioAlertService: {} }));
 const getOrganizations = apiService.getOrganizations as jest.Mock;
 
 describe('organization alert SSR initialization', () => {
-  test('does not access the API during module construction without window', () => {
+  beforeEach(() => {
+    getOrganizations.mockClear();
+  });
+
+  test('does not call GET /organizations during module construction', () => {
     expect(getOrganizations).not.toHaveBeenCalled();
   });
 
-  test.each(['android', 'ios'])('initializes organizations on %s', platform => {
-    (Platform as { OS: string }).OS = platform;
-    getOrganizations.mockResolvedValueOnce({ data: { data: [] } });
+  test.each(['android', 'ios', 'web'])('does not call GET /organizations on %s construction', () => {
     new OrganizationAlertService();
+    expect(getOrganizations).not.toHaveBeenCalled();
+  });
+
+  test('initializeOrganizations calls GET /organizations when invoked explicitly', async () => {
+    getOrganizations.mockResolvedValueOnce({ data: { data: [] } });
+    const service = new OrganizationAlertService();
+    await service.initializeOrganizations();
     expect(getOrganizations).toHaveBeenCalledTimes(1);
-    getOrganizations.mockClear();
   });
 });
