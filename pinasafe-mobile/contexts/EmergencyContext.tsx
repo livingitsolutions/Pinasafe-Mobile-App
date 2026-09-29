@@ -2,8 +2,7 @@
 // import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 // import { apiService } from '@/services/apiService';
 // import { EmergencyEvidence, ClassificationResult } from '@/services/AIClassificationService';
-// import { organizationAlertService, AlertDispatch } from '@/services/organizationAlertService';
-// import { incidentClusteringService, ClusteredIncident } from '@/hooks/incidentClusteringService';
+// // import { incidentClusteringService, ClusteredIncident } from '@/hooks/incidentClusteringService';
 // import { reactNativeAudioAlertService } from '@/services/ReactNativeAudioAlertService';
 // import { useAuth } from './AuthContext';
 
@@ -502,8 +501,7 @@
 // import { AppState, AppStateStatus } from 'react-native';
 // import { apiService } from '@/services/apiService';
 // import { EmergencyEvidence, ClassificationResult } from '@/services/AIClassificationService';
-// import { organizationAlertService, AlertDispatch } from '@/services/organizationAlertService';
-// import { incidentClusteringService, ClusteredIncident } from '@/hooks/incidentClusteringService';
+// // import { incidentClusteringService, ClusteredIncident } from '@/hooks/incidentClusteringService';
 // import { reactNativeAudioAlertService } from '@/services/ReactNativeAudioAlertService';
 // import { useAuth } from './AuthContext';
 
@@ -996,7 +994,6 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { apiService } from '@/services/apiService';
-import { organizationAlertService, AlertDispatch } from '@/services/organizationAlertService';
 import { incidentClusteringService, ClusteredIncident } from '@/hooks/incidentClusteringService';
 import { reactNativeAudioAlertService } from '@/services/alertAudio';
 import { useAuth } from './AuthContext';
@@ -1017,6 +1014,18 @@ interface EmergencyEvidence {
   timestamp: string;
   location: { latitude: number; longitude: number } | null;
   address: string | null;
+}
+
+export interface AlertDispatch {
+  id: string;
+  emergencyId: string;
+  organizationId: string;
+  personnelAlerted: string[];
+  alertType: 'primary' | 'secondary' | 'backup';
+  dispatchedAt: string;
+  acknowledgedBy: string[];
+  respondingPersonnel: string[];
+  status: 'dispatched' | 'acknowledged' | 'responding' | 'completed';
 }
 
 export interface EmergencyReport {
@@ -1283,25 +1292,6 @@ export function EmergencyProvider({ children }: { children: React.ReactNode }) {
 
       const newId = response.data?.id || '';
 
-      // Dispatch alerts to responsible organizations based on emergency type.
-      // Keep this best-effort: failures to dispatch should not break report submission.
-      try {
-        await organizationAlertService.dispatchEmergencyAlert({
-          id: newId,
-          type: reportData.type as string,
-          location: reportData.location || (reportData.coordinates ? `${reportData.coordinates.latitude},${reportData.coordinates.longitude}` : 'Unknown'),
-          coordinates: reportData.coordinates,
-          priority: reportData.priority as string,
-          description: reportData.description,
-          hasEvidence: Boolean(reportData.evidence),
-          aiClassified: Boolean(reportData.aiClassification),
-          aiConfidence: (reportData.aiClassification as any)?.confidence,
-        });
-      } catch (dispatchError) {
-        console.error('Error dispatching organization alerts:', dispatchError);
-        // don't fail the submit if dispatch fails; continue to refresh reports
-      }
-
       // Reload reports to get updated data
       await loadReports();
 
@@ -1329,11 +1319,6 @@ export function EmergencyProvider({ children }: { children: React.ReactNode }) {
   // DISPATCH RESPONDERS
   const alertResponders = async (reportId: string, alertData: any) => {
     try {
-      const dispatches = await organizationAlertService.dispatchEmergencyAlert({
-        id: reportId,
-        ...alertData
-      });
-
       if (isResponder) {
         reactNativeAudioAlertService.playIncidentAlert(alertData.type, alertData.priority);
       }
@@ -1341,7 +1326,7 @@ export function EmergencyProvider({ children }: { children: React.ReactNode }) {
       await apiService.createAlert({
         type: 'emergency',
         title: `🚨 EMERGENCY DISPATCHED: ${alertData.type.toUpperCase()}`,
-        description: `Alert sent to ${dispatches.length} org(s) - ${alertData.location}`,
+        description: `${alertData.hasEvidence ? '📸 Evidence attached' : '📝 Manual report'} - ${alertData.location}`,
         priority: alertData.priority,
         location: alertData.location,
         affectedAreas: ['System'],

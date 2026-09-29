@@ -1,7 +1,6 @@
 
 import { apiService } from './apiService';
 import { audioAlertService } from './AudioAlertService';
-import { isClientRuntime } from '@/utils/clientRuntime';
 
 export interface Organization {
   id: string;
@@ -63,9 +62,10 @@ export class OrganizationAlertService {
   private isInitialized = false;
 
   constructor() {
-    if (isClientRuntime()) {
-      void this.initializeOrganizations();
-    }
+    // Organizations are loaded lazily via initializeOrganizations() when
+    // dispatchEmergencyAlert is called, not at construction time.
+    // Eager loading caused an unauthenticated GET /organizations request
+    // on every page load, including /login.
   }
 
   // Load organizations from database
