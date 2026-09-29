@@ -96,7 +96,7 @@ export default function ReportEmergency() {
 
     try {
       const sid = await ensureSession();
-      const response = await apiService.uploadEvidenceImage(sid, { uri });
+      const response = await apiService.uploadEvidenceImage(sid, { uri }, captureLoc);
       const result = response.data?.data;
       if (!result) throw new Error('The server returned no classification result.');
 

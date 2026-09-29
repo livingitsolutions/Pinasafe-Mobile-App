@@ -125,7 +125,7 @@ const handleFinalizationFailure = async ({
   throw persistenceError('PERSISTENCE_UNAVAILABLE');
 };
 
-const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId }) => {
+const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captureLocation = null }) => {
   let dimensions;
   try {
     dimensions = getJpegDimensions(imageBuffer);
@@ -208,7 +208,11 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId }) => 
       p_classification_label: classification.label,
       p_classification_confidence: classification.confidence,
       p_classification_reason: classification.reason,
-      p_classification_caption: classification.caption
+      p_classification_caption: classification.caption,
+      p_capture_latitude: captureLocation ? captureLocation.latitude : null,
+      p_capture_longitude: captureLocation ? captureLocation.longitude : null,
+      p_capture_accuracy: captureLocation ? captureLocation.accuracy : null,
+      p_capture_timestamp: captureLocation ? new Date(captureLocation.timestamp).toISOString() : null
     });
 
     if (error) throw error;

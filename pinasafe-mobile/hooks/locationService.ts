@@ -44,7 +44,7 @@ class LocationService {
     }
   }
 
-  async getCurrentLocation(): Promise<LocationData> {
+  async getCurrentLocation(): Promise<LocationData | null> {
     try {
       const permission = await this.requestPermission();
       
@@ -84,22 +84,7 @@ class LocationService {
       this.lastKnownLocation = locationData;
       return locationData;
     } catch (error) {
-      console.error('Error getting current location:', error);
-      
-      // Return last known location if available
-      if (this.lastKnownLocation) {
-        return this.lastKnownLocation;
-      }
-      
-      // Fallback to Hilongos, Leyte coordinates
-      return {
-        coords: {
-          latitude: 10.3929,
-          longitude: 124.7544,
-        },
-        timestamp: Date.now(),
-        address: 'Hilongos, Leyte, Philippines',
-      };
+      return null;
     }
   }
 

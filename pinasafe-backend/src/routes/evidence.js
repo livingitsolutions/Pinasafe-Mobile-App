@@ -78,8 +78,8 @@ const singleImageParser = multer({
   limits: {
     fileSize: MAX_EVIDENCE_BYTES + 1,
     files: 1,
-    fields: 0,
-    parts: 2
+    fields: 4,
+    parts: 6
   },
   fileFilter: (req, file, callback) => {
     if (file.mimetype !== JPEG_MIME_TYPE) {
@@ -223,10 +223,30 @@ router.post(
   parseMultipartImage,
   async (req, res) => {
     try {
+      const captureLatitude = req.body.captureLatitude != null ? parseFloat(req.body.captureLatitude) : null;
+      const captureLongitude = req.body.captureLongitude != null ? parseFloat(req.body.captureLongitude) : null;
+      const captureAccuracy = req.body.captureAccuracy != null ? parseFloat(req.body.captureAccuracy) : null;
+      const captureTimestamp = req.body.captureTimestamp != null ? Number(req.body.captureTimestamp) : null;
+
+      const captureLocation =
+        captureLatitude != null && captureLongitude != null
+          && Number.isFinite(captureLatitude) && captureLatitude >= -90 && captureLatitude <= 90
+          && Number.isFinite(captureLongitude) && captureLongitude >= -180 && captureLongitude <= 180
+          && (captureAccuracy == null || (Number.isFinite(captureAccuracy) && captureAccuracy >= 0))
+          && (captureTimestamp == null || (Number.isFinite(captureTimestamp) && captureTimestamp > 0))
+          ? {
+              latitude: captureLatitude,
+              longitude: captureLongitude,
+              accuracy: captureAccuracy,
+              timestamp: captureTimestamp
+            }
+          : null;
+
       const result = await persistEvidenceImage({
         imageBuffer: req.file.buffer,
         sessionId: req.params.sessionId,
-        ownerUserId: req.user.id
+        ownerUserId: req.user.id,
+        captureLocation
       });
 
       if (!result.accepted) {
@@ -319,7 +339,7 @@ router.get(
 
       const { data: evidenceRows, error: evidenceError } = await supabase
         .from('report_evidence')
-        .select('id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, created_at')
+        .select('id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, capture_timestamp, created_at')
         .eq('emergency_report_id', reportId)
         .eq('status', 'bound');
 
@@ -354,6 +374,14 @@ router.get(
               confidence: row.classification_confidence,
               caption: row.classification_caption
             },
+            captureLocation: row.capture_latitude != null && row.capture_longitude != null
+              ? {
+                  latitude: row.capture_latitude,
+                  longitude: row.capture_longitude,
+                  accuracy: row.capture_accuracy,
+                  timestamp: row.capture_timestamp
+                }
+              : null,
             createdAt: row.created_at,
             expiresIn: SIGNED_URL_EXPIRES_IN
           };

@@ -308,7 +308,8 @@ class APIService {
 
   async uploadEvidenceImage(
     sessionId: string,
-    image: { uri: string; name?: string; type?: string }
+    image: { uri: string; name?: string; type?: string },
+    captureLocation?: { latitude: number; longitude: number; accuracy?: number; timestamp: number }
   ): Promise<APIResponse<{ data: EvidenceUploadResult }>> {
     const formData = new FormData();
     const name = image.name || 'evidence.jpg';
@@ -337,6 +338,15 @@ class APIService {
         name,
         type,
       } as unknown as Blob);
+    }
+
+    if (captureLocation) {
+      formData.append('captureLatitude', String(captureLocation.latitude));
+      formData.append('captureLongitude', String(captureLocation.longitude));
+      if (captureLocation.accuracy != null) {
+        formData.append('captureAccuracy', String(captureLocation.accuracy));
+      }
+      formData.append('captureTimestamp', String(captureLocation.timestamp));
     }
 
     return this.request(`/evidence/sessions/${sessionId}/image`, {

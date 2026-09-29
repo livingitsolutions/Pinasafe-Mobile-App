@@ -437,6 +437,23 @@ describe('apiService (F2 foundation)', () => {
     expect(request.body).toBeInstanceOf(FormData);
   });
 
+  test('REGRESSION: capture location metadata is appended to FormData when provided', async () => {
+    apiService.setToken('valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: { accepted: true, evidenceId: 'ev-1', classification: { label: 'road', confidence: 0.88, status: 'valid', action: 'accept', reason: null, caption: null } } }));
+
+    await apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' }, {
+      latitude: 10.5, longitude: 124.9, accuracy: 5, timestamp: 1700000000000,
+    });
+
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.body).toBeInstanceOf(FormData);
+    expect(request.body.get('captureLatitude')).toBe('10.5');
+    expect(request.body.get('captureLongitude')).toBe('124.9');
+    expect(request.body.get('captureAccuracy')).toBe('5');
+    expect(request.body.get('captureTimestamp')).toBe('1700000000000');
+  });
+
   test('REGRESSION: ordinary JSON requests still send application/json Content-Type', async () => {
     apiService.setToken('valid-token');
     (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { ok: true }));
