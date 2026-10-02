@@ -9,6 +9,8 @@ import { apiService, ApiError, isApiError } from '../services/apiService';
 
 jest.mock('react-native', () => ({ Platform: { OS: 'web' } }));
 
+const captureLocation = { latitude: 0, longitude: 1, capturedAt: '2026-10-02T00:00:00.000Z' };
+
 const jsonResponse = (status: number, body: unknown): Response =>
   ({
     ok: status >= 200 && status < 300,
@@ -241,7 +243,7 @@ describe('apiService (F2 foundation)', () => {
 
     await apiService.uploadEvidenceImage('session-id', {
       uri: 'blob:http://localhost/captured-image',
-    });
+    }, captureLocation);
 
     expect(global.fetch).toHaveBeenNthCalledWith(
       1,
@@ -281,7 +283,7 @@ describe('apiService (F2 foundation)', () => {
       uri: 'file:///camera/evidence.jpg',
       name: 'capture.jpg',
       type: 'image/jpeg',
-    });
+    }, captureLocation);
 
     expect(appendSpy).toHaveBeenCalledWith('image', {
       uri: 'file:///camera/evidence.jpg',
@@ -315,7 +317,7 @@ describe('apiService (F2 foundation)', () => {
     await expect(
       apiService.uploadEvidenceImage('session-id', {
         uri: 'blob:http://localhost/missing-image',
-      })
+      }, captureLocation)
     ).rejects.toThrow('Unable to prepare evidence image for upload.');
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
@@ -404,7 +406,7 @@ describe('apiService (F2 foundation)', () => {
     apiService.setToken('valid-token');
     (Platform as { OS: string }).OS = 'ios';
     (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(200, { data: { accepted: false, label: 'other', confidence: 0.2, status: 'valid', action: 'reject', reason: 'Not an incident', caption: null } }));
-    const result = await apiService.uploadEvidenceImage('session-id', { uri: 'local-test-uri' });
+    const result = await apiService.uploadEvidenceImage('session-id', { uri: 'local-test-uri' }, captureLocation);
     expect(result.data?.data.accepted).toBe(false);
     const [, request] = (global.fetch as jest.Mock).mock.calls[0];
     expect(request.method).toBe('POST');
@@ -429,7 +431,7 @@ describe('apiService (F2 foundation)', () => {
     (Platform as { OS: string }).OS = 'ios';
     (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: { accepted: true, evidenceId: 'ev-1', classification: { label: 'fire', confidence: 0.95, status: 'valid', action: 'accept', reason: null, caption: null } } }));
 
-    await apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' });
+    await apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' }, captureLocation);
 
     const [, request] = (global.fetch as jest.Mock).mock.calls[0];
     expect(request.headers.Authorization).toBe('Bearer valid-token');
@@ -443,15 +445,16 @@ describe('apiService (F2 foundation)', () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: { accepted: true, evidenceId: 'ev-1', classification: { label: 'road', confidence: 0.88, status: 'valid', action: 'accept', reason: null, caption: null } } }));
 
     await apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' }, {
-      latitude: 10.5, longitude: 124.9, accuracy: 5, timestamp: 1700000000000,
+      ...captureLocation, accuracy: 5,
     });
 
     const [, request] = (global.fetch as jest.Mock).mock.calls[0];
     expect(request.body).toBeInstanceOf(FormData);
-    expect(request.body.get('captureLatitude')).toBe('10.5');
-    expect(request.body.get('captureLongitude')).toBe('124.9');
+    expect(request.body.get('captureLatitude')).toBe(String(captureLocation.latitude));
+    expect(request.body.get('captureLongitude')).toBe(String(captureLocation.longitude));
     expect(request.body.get('captureAccuracy')).toBe('5');
-    expect(request.body.get('captureTimestamp')).toBe('1700000000000');
+    expect(request.body.get('capturedAt')).toBe(captureLocation.capturedAt);
+    expect(request.body.get('captureTimestamp')).toBeNull();
   });
 
   test('REGRESSION: ordinary JSON requests still send application/json Content-Type', async () => {
@@ -487,8 +490,51 @@ describe('apiService (F2 foundation)', () => {
 
     (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(503, { error: 'Classification service unavailable' }));
 
-    await expect(apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' })).rejects.toMatchObject({ status: 503 });
+    await expect(apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' }, captureLocation)).rejects.toMatchObject({ status: 503 });
     expect(apiService.getToken()).toBe('valid-token');
     expect(sessionExpired).not.toHaveBeenCalled();
+  });
+
+  test.each([400, 403, 409, 500, 503])('evidence upload %s retains the authenticated session', async status => {
+    apiService.setToken('valid-token');
+    await AsyncStorage.setItem('auth_token', 'valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    const sessionExpired = jest.fn();
+    apiService.onSessionExpired(sessionExpired);
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(status, { error: 'Evidence upload failed' }));
+    await expect(apiService.uploadEvidenceImage('session-id', { uri: 'photo' }, captureLocation)).rejects.toMatchObject({ status });
+    expect(apiService.getToken()).toBe('valid-token');
+    expect(await AsyncStorage.getItem('auth_token')).toBe('valid-token');
+    expect(sessionExpired).not.toHaveBeenCalled();
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.headers.Authorization).toBe('Bearer valid-token');
+    expect(request.headers['Content-Type']).toBeUndefined();
+  });
+
+  test('genuine authenticated multipart 401 expires the session', async () => {
+    apiService.setToken('valid-token');
+    await AsyncStorage.setItem('auth_token', 'valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    const sessionExpired = jest.fn();
+    apiService.onSessionExpired(sessionExpired);
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(401, { error: 'Invalid token' }));
+    await expect(apiService.uploadEvidenceImage('session-id', { uri: 'photo' }, captureLocation)).rejects.toMatchObject({ status: 401 });
+    expect(apiService.getToken()).toBeNull();
+    expect(await AsyncStorage.getItem('auth_token')).toBeNull();
+    expect(sessionExpired).toHaveBeenCalledTimes(1);
+  });
+
+  test('invalid capture metadata is rejected before image preparation or upload', async () => {
+    await expect(apiService.uploadEvidenceImage('session-id', { uri: 'photo' }, { ...captureLocation, latitude: NaN })).rejects.toThrow(/capture location/i);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('omits optional accuracy and transmits the exact required capture field names', async () => {
+    apiService.setToken('valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: {} }));
+    await apiService.uploadEvidenceImage('session-id', { uri: 'photo' }, captureLocation);
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect([...request.body.keys()]).toEqual(['image', 'captureLatitude', 'captureLongitude', 'capturedAt']);
   });
 });

@@ -3,9 +3,11 @@ import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from 'react-na
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Camera as CameraIcon, RotateCcw, X } from 'lucide-react-native';
+import { locationService } from '@/hooks/locationService';
+import { captureWithLocation, CaptureLocation } from '@/utils/evidenceFlow';
 
 interface CameraCaptureProps {
-  onCapture: (uri: string) => Promise<void>;
+  onCapture: (uri: string, captureLocation: CaptureLocation) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -26,7 +28,11 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
 
     try {
       setIsProcessing(true);
-      const rawPhoto = await cameraRef.current.takePictureAsync({ quality: 1 });
+      const camera = cameraRef.current;
+      const { photo: rawPhoto, captureLocation } = await captureWithLocation(
+        () => camera.takePictureAsync({ quality: 1 }),
+        () => locationService.getCurrentLocation(),
+      );
       if (!rawPhoto?.uri) throw new Error('Failed to capture image.');
 
       const normalizedPhoto = await ImageManipulator.manipulateAsync(
@@ -34,11 +40,11 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         [{ resize: { width: 500, height: 500 } }],
         { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
       );
-      await onCapture(normalizedPhoto.uri);
+      await onCapture(normalizedPhoto.uri, captureLocation);
     } catch {
       Alert.alert(
         'Capture Error',
-        'Something went wrong while capturing the image.\n\nPlease try again.',
+        'A photo and current location are required. Check camera and location permissions, then try again.',
         [{ text: 'OK' }]
       );
     } finally {

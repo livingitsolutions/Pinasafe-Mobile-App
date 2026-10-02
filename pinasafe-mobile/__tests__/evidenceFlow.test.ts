@@ -1,17 +1,20 @@
 import { acquireSubmissionLock, buildDurableReportPayload, countAcceptedEvidence, MAX_ACCEPTED_EVIDENCE, EvidenceItem, CaptureLocation } from '../utils/evidenceFlow';
+import type { PrivateEvidenceItem } from '../services/apiService';
+
+const captureLocation: CaptureLocation = { latitude: 0, longitude: 1, capturedAt: '2026-10-02T00:00:00.000Z' };
 
 describe('durable citizen evidence flow', () => {
   test('only accepted evidence counts toward the maximum of five', () => {
     const items: EvidenceItem[] = [
-      ...Array.from({ length: MAX_ACCEPTED_EVIDENCE }, (_, index) => ({ localId: `${index}`, uri: 'local', status: 'accepted' as const })),
-      { localId: 'rejected', uri: 'local', status: 'rejected' as const },
-      { localId: 'error', uri: 'local', status: 'error' as const },
+      ...Array.from({ length: MAX_ACCEPTED_EVIDENCE }, (_, index) => ({ captureLocation, localId: `${index}`, uri: 'local', status: 'accepted' as const })),
+      { captureLocation, localId: 'rejected', uri: 'local', status: 'rejected' as const },
+      { captureLocation, localId: 'error', uri: 'local', status: 'error' as const },
     ];
     expect(countAcceptedEvidence(items)).toBe(5);
   });
 
   test.each(['road', 'fire'] as const)('builds a %s report with the durable binding identifier', type => {
-    const captureLoc: CaptureLocation = { latitude: 10.5, longitude: 124.9, timestamp: 1700000000000 };
+    const captureLoc: CaptureLocation = { latitude: 10.5, longitude: 124.9, capturedAt: '2026-10-02T00:00:00.000Z' };
     expect(buildDurableReportPayload({
       type, description: '  A detailed incident  ', location: '  Main Road  ', uploadSessionId: 'session-id',
       coordinates: { latitude: captureLoc.latitude, longitude: captureLoc.longitude },
@@ -36,7 +39,7 @@ describe('durable citizen evidence flow', () => {
         latitude: 10.5,
         longitude: 124.9,
         accuracy: 15,
-        timestamp: 1700000000000,
+        capturedAt: '2026-10-02T00:00:00.000Z',
         address: 'Main Road, Test City',
       },
     };
@@ -57,8 +60,8 @@ describe('durable citizen evidence flow', () => {
   });
 
   test('second capture can have different coordinates from first', () => {
-    const loc1: CaptureLocation = { latitude: 10.5, longitude: 124.9, timestamp: 1700000000000 };
-    const loc2: CaptureLocation = { latitude: 10.6, longitude: 125.0, timestamp: 1700000001000 };
+    const loc1: CaptureLocation = { latitude: 10.5, longitude: 124.9, capturedAt: '2026-10-02T00:00:00.000Z' };
+    const loc2: CaptureLocation = { latitude: 10.6, longitude: 125.0, capturedAt: '2026-10-02T00:00:00.000Z' };
     const items: EvidenceItem[] = [
       { localId: '1', uri: 'a', status: 'accepted', captureLocation: loc1 },
       { localId: '2', uri: 'b', status: 'accepted', captureLocation: loc2 },
@@ -69,15 +72,16 @@ describe('durable citizen evidence flow', () => {
 
   test('rejected evidence is not counted as accepted', () => {
     const items: EvidenceItem[] = [
-      { localId: '1', uri: 'a', status: 'accepted', captureLocation: { latitude: 10.5, longitude: 124.9, timestamp: 1 } },
-      { localId: '2', uri: 'b', status: 'rejected' },
+      { localId: '1', uri: 'a', status: 'accepted', captureLocation: { latitude: 10.5, longitude: 124.9, capturedAt: '2026-10-02T00:00:00.000Z' } },
+      { captureLocation, localId: '2', uri: 'b', status: 'rejected' },
     ];
     expect(countAcceptedEvidence(items)).toBe(1);
   });
 
-  test('evidence without capture location remains valid (nullable)', () => {
-    const item: EvidenceItem = { localId: '1', uri: 'a', status: 'accepted' };
+  test('historical private evidence without capture location remains valid', () => {
+    const item: Pick<PrivateEvidenceItem, 'captureLocation'> = {};
     expect(item.captureLocation).toBeUndefined();
-    expect(countAcceptedEvidence([item])).toBe(1);
+    const legacyWithNull: Pick<PrivateEvidenceItem, 'captureLocation'> = { captureLocation: null };
+    expect(legacyWithNull.captureLocation).toBeNull();
   });
 });

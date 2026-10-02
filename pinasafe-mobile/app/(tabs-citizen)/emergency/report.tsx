@@ -5,7 +5,6 @@ import { Check, MapPin, RotateCcw, Send, Camera, AlertTriangle, Crosshair } from
 import CameraCapture from '@/components/CameraCapture';
 import { Banner, Button, Card, Field, Input, PageHeader, Screen, Section, TextArea, TypeBadge } from '@/components/ui';
 import { apiService, isApiError } from '@/services/apiService';
-import { locationService } from '@/hooks/locationService';
 import {
   acquireSubmissionLock,
   buildDurableReportPayload,
@@ -14,6 +13,8 @@ import {
   IncidentType,
   MAX_ACCEPTED_EVIDENCE,
   CaptureLocation,
+  getFirstAcceptedCaptureLocation,
+  isValidCaptureLocation,
 } from '@/utils/evidenceFlow';
 import { colors, radius, space, type as typography } from '@/theme/tokens';
 
@@ -25,7 +26,6 @@ export default function ReportEmergency() {
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [contactNumber, setContactNumber] = useState('');
-  const [captureLocation, setCaptureLocation] = useState<CaptureLocation | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
   const [busy, setBusy] = useState(false);
@@ -35,6 +35,7 @@ export default function ReportEmergency() {
   const [locationStatus, setLocationStatus] = useState<'idle' | 'fetching' | 'denied' | 'ready'>('idle');
   const lock = useRef(false);
   const accepted = countAcceptedEvidence(evidence);
+  const captureLocation = getFirstAcceptedCaptureLocation(evidence);
   const uploading = evidence.some(item => item.status === 'uploading');
 
   const ensureSession = async () => {
@@ -46,53 +47,27 @@ export default function ReportEmergency() {
     return id;
   };
 
-  const captureLocationAtCapture = async (): Promise<CaptureLocation | null> => {
-    setLocationStatus('fetching');
-    try {
-      const loc = await locationService.getCurrentLocation();
-      if (!loc) {
-        setLocationStatus('denied');
-        return null;
-      }
-      const captureLoc: CaptureLocation = {
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-        accuracy: loc.coords.accuracy,
-        timestamp: loc.timestamp,
-        address: loc.address,
-      };
-      setLocationStatus('ready');
-      return captureLoc;
-    } catch {
-      setLocationStatus('denied');
-      return null;
-    }
-  };
-
   const openCamera = () => {
-    if (accepted >= MAX_ACCEPTED_EVIDENCE) return;
+    if (busy || uploading || accepted >= MAX_ACCEPTED_EVIDENCE) return;
     setError('');
     setShowCamera(true);
   };
 
-  const handleCapture = async (uri: string) => {
+  const handleCapture = async (uri: string, captureLoc: CaptureLocation) => {
     setShowCamera(false);
     setBusy(true);
     setError('');
 
-    const captureLoc = await captureLocationAtCapture();
-    if (!captureLoc) {
+    if (!isValidCaptureLocation(captureLoc)) {
+      setLocationStatus('denied');
       setError('Location is required to capture evidence. Grant location permission and try again.');
       setBusy(false);
       return;
     }
+    setLocationStatus('ready');
 
     const localId = `${Date.now()}-${Math.random()}`;
     setEvidence(items => [...items, { localId, uri, status: 'uploading', captureLocation: captureLoc }]);
-
-    if (!location.trim() && captureLoc.address) {
-      setLocation(captureLoc.address);
-    }
 
     try {
       const sid = await ensureSession();
@@ -102,11 +77,11 @@ export default function ReportEmergency() {
 
       if (result.accepted && 'classification' in result) {
         const label = result.classification.label as IncidentType;
-        setIncidentType(label);
+        setIncidentType(current => current ?? label);
+        if (accepted === 0 && captureLoc.address) setLocation(captureLoc.address);
         setEvidence(items => items.map(item => item.localId === localId
           ? { ...item, status: 'accepted', classification: result.classification }
           : item));
-        setCaptureLocation(captureLoc);
         setStage('verify');
       } else {
         const classification = result as any;
@@ -125,15 +100,15 @@ export default function ReportEmergency() {
 
   const retake = () => {
     setEvidence([]);
+    setSessionId(null);
     setIncidentType(null);
-    setCaptureLocation(null);
     setLocationStatus('idle');
     setStage('capture');
   };
 
   const submit = async () => {
-    if (!sessionId || !acquireSubmissionLock(lock)) return;
-    if (!incidentType || !captureLocation) return;
+    if (!sessionId || !incidentType || !isValidCaptureLocation(captureLocation)
+      || !acquireSubmissionLock(lock)) return;
     setBusy(true);
     setError('');
     try {
@@ -252,7 +227,7 @@ export default function ReportEmergency() {
                 <View style={styles.locationCopy}>
                   <Text style={styles.locationText}>{captureLocation.address || `${captureLocation.latitude.toFixed(4)}, ${captureLocation.longitude.toFixed(4)}`}</Text>
                   {captureLocation.accuracy ? <Text style={styles.accuracyText}>Accuracy: ±{Math.round(captureLocation.accuracy)}m</Text> : null}
-                  <Text style={styles.timestampText}>Captured at {new Date(captureLocation.timestamp).toLocaleString()}</Text>
+                  <Text style={styles.timestampText}>Captured at {new Date(captureLocation.capturedAt).toLocaleString()}</Text>
                 </View>
               </View>
             ) : (
