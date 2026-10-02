@@ -1,61 +1,83 @@
--- PWA-2.2 per-evidence capture location columns.
---
--- Each accepted evidence item must durably retain its own capture metadata
--- independently of the canonical report coordinates. The report's
--- latitude/longitude remain on emergency_reports; the columns below
--- belong to report_evidence so every photo carries its own capture origin.
---
--- Columns are nullable so historical rows (created before this migration)
--- remain valid without backfill.
---
--- 1. Table affected: public.report_evidence
--- 2. Columns proposed:
---    capture_latitude   double precision (nullable)
---    capture_longitude  double precision (nullable)
---    capture_accuracy   double precision (nullable)
---    capture_timestamp  timestamptz     (nullable)
--- 3. Nullability: all nullable — historical rows remain valid.
--- 4. Constraints:
---    latitude range -90..90
---    longitude range -180..180
---    accuracy non-negative
---    lat/lng both null or both non-null
--- 5. Compatibility: existing rows have NULL for all four columns.
--- 6. Historical rows remain valid (no backfill needed).
--- 7. RPC changes: finalize_report_evidence_upload gains 4 new parameters
---    (p_capture_latitude, p_capture_longitude, p_capture_accuracy,
---     p_capture_timestamp) and writes them into the new columns.
--- 8. Rollback: ALTER TABLE DROP COLUMN for each; DROP FUNCTION if replaced.
--- 9. RLS/security: no change — service_role only, browser roles have no access.
-
+-- Persist capture metadata per evidence item. Existing evidence remains NULL.
 ALTER TABLE public.report_evidence
-  ADD COLUMN IF NOT EXISTS capture_latitude double precision,
-  ADD COLUMN IF NOT EXISTS capture_longitude double precision,
-  ADD COLUMN IF NOT EXISTS capture_accuracy double precision,
-  ADD COLUMN IF NOT EXISTS capture_timestamp timestamptz;
+  ADD COLUMN capture_latitude double precision,
+  ADD COLUMN capture_longitude double precision,
+  ADD COLUMN capture_accuracy double precision,
+  ADD COLUMN captured_at timestamptz;
 
 ALTER TABLE public.report_evidence
   ADD CONSTRAINT report_evidence_capture_latitude_range
-    CHECK (capture_latitude IS NULL OR (capture_latitude >= -90 AND capture_latitude <= 90));
-
-ALTER TABLE public.report_evidence
+    CHECK (capture_latitude IS NULL OR capture_latitude BETWEEN -90 AND 90),
   ADD CONSTRAINT report_evidence_capture_longitude_range
-    CHECK (capture_longitude IS NULL OR (capture_longitude >= -180 AND capture_longitude <= 180));
-
-ALTER TABLE public.report_evidence
-  ADD CONSTRAINT report_evidence_capture_accuracy_non_negative
-    CHECK (capture_accuracy IS NULL OR (capture_accuracy >= 0));
-
-ALTER TABLE public.report_evidence
-  ADD CONSTRAINT report_evidence_capture_coords_consistent
+    CHECK (capture_longitude IS NULL OR capture_longitude BETWEEN -180 AND 180),
+  ADD CONSTRAINT report_evidence_capture_accuracy_nonnegative
     CHECK (
-      (capture_latitude IS NULL AND capture_longitude IS NULL)
-      OR
-      (capture_latitude IS NOT NULL AND capture_longitude IS NOT NULL)
+      capture_accuracy IS NULL
+      OR (
+        capture_accuracy >= 0
+        AND capture_accuracy NOT IN (
+          'NaN'::double precision,
+          'Infinity'::double precision,
+          '-Infinity'::double precision
+        )
+      )
+    ),
+  ADD CONSTRAINT report_evidence_capture_location_complete
+    CHECK (
+      (capture_latitude IS NULL) = (capture_longitude IS NULL)
+      AND (capture_latitude IS NULL) = (captured_at IS NULL)
     );
 
--- Updated finalization RPC with capture location parameters.
-CREATE OR REPLACE FUNCTION public.finalize_report_evidence_upload(
+CREATE OR REPLACE FUNCTION public.prevent_bound_capture_location_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, public
+AS $function$
+BEGIN
+  IF (OLD.status = 'bound' OR NEW.status = 'bound')
+    AND ROW(
+      NEW.capture_latitude,
+      NEW.capture_longitude,
+      NEW.capture_accuracy,
+      NEW.captured_at
+    ) IS DISTINCT FROM ROW(
+      OLD.capture_latitude,
+      OLD.capture_longitude,
+      OLD.capture_accuracy,
+      OLD.captured_at
+    )
+  THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'BOUND_EVIDENCE_CAPTURE_LOCATION_IMMUTABLE';
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+ALTER FUNCTION public.prevent_bound_capture_location_mutation() OWNER TO postgres;
+REVOKE ALL ON FUNCTION public.prevent_bound_capture_location_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.prevent_bound_capture_location_mutation() FROM anon;
+REVOKE ALL ON FUNCTION public.prevent_bound_capture_location_mutation() FROM authenticated;
+
+CREATE TRIGGER trigger_prevent_bound_capture_location_mutation
+  BEFORE UPDATE ON public.report_evidence
+  FOR EACH ROW
+  EXECUTE FUNCTION public.prevent_bound_capture_location_mutation();
+
+DROP FUNCTION public.finalize_report_evidence_upload(
+  uuid,
+  uuid,
+  uuid,
+  integer,
+  integer,
+  text,
+  numeric,
+  text,
+  text
+);
+
+CREATE FUNCTION public.finalize_report_evidence_upload(
   p_session_id uuid,
   p_owner_user_id uuid,
   p_evidence_id uuid,
@@ -65,16 +87,16 @@ CREATE OR REPLACE FUNCTION public.finalize_report_evidence_upload(
   p_classification_confidence numeric,
   p_classification_reason text,
   p_classification_caption text,
-  p_capture_latitude double precision DEFAULT NULL,
-  p_capture_longitude double precision DEFAULT NULL,
-  p_capture_accuracy double precision DEFAULT NULL,
-  p_capture_timestamp timestamptz DEFAULT NULL
+  p_capture_latitude double precision,
+  p_capture_longitude double precision,
+  p_capture_accuracy double precision,
+  p_captured_at timestamptz
 )
 RETURNS text
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = public
-AS $
+SET search_path = pg_catalog, public
+AS $function$
 DECLARE
   v_session public.evidence_upload_sessions%ROWTYPE;
   v_evidence public.report_evidence%ROWTYPE;
@@ -115,13 +137,19 @@ BEGIN
       AND char_length(p_classification_reason) > 1000)
     OR (p_classification_caption IS NOT NULL
       AND char_length(p_classification_caption) > 1000)
-    OR (p_capture_latitude IS NOT NULL
-      AND (p_capture_latitude < -90 OR p_capture_latitude > 90))
-    OR (p_capture_longitude IS NOT NULL
-      AND (p_capture_longitude < -180 OR p_capture_longitude > 180))
-    OR (p_capture_accuracy IS NOT NULL AND p_capture_accuracy < 0)
-    OR (p_capture_latitude IS NOT NULL AND p_capture_longitude IS NULL)
-    OR (p_capture_longitude IS NOT NULL AND p_capture_latitude IS NULL)
+    OR p_capture_latitude IS NULL
+    OR p_capture_latitude NOT BETWEEN -90 AND 90
+    OR p_capture_longitude IS NULL
+    OR p_capture_longitude NOT BETWEEN -180 AND 180
+    OR p_captured_at IS NULL
+    OR (p_capture_accuracy IS NOT NULL AND (
+      p_capture_accuracy < 0
+      OR p_capture_accuracy IN (
+        'NaN'::double precision,
+        'Infinity'::double precision,
+        '-Infinity'::double precision
+      )
+    ))
   THEN
     RETURN 'FINALIZATION_INVALID';
   END IF;
@@ -139,7 +167,7 @@ BEGIN
     capture_latitude = p_capture_latitude,
     capture_longitude = p_capture_longitude,
     capture_accuracy = p_capture_accuracy,
-    capture_timestamp = p_capture_timestamp,
+    captured_at = p_captured_at,
     status = 'accepted',
     accepted_at = clock_timestamp()
   WHERE evidence_row.id = p_evidence_id
@@ -153,7 +181,12 @@ BEGIN
 
   RETURN 'FINALIZED';
 END;
-$;
+$function$;
+
+ALTER FUNCTION public.finalize_report_evidence_upload(
+  uuid, uuid, uuid, integer, integer, text, numeric, text, text,
+  double precision, double precision, double precision, timestamptz
+) OWNER TO postgres;
 
 REVOKE ALL ON FUNCTION public.finalize_report_evidence_upload(
   uuid, uuid, uuid, integer, integer, text, numeric, text, text,
@@ -171,4 +204,3 @@ GRANT EXECUTE ON FUNCTION public.finalize_report_evidence_upload(
   uuid, uuid, uuid, integer, integer, text, numeric, text, text,
   double precision, double precision, double precision, timestamptz
 ) TO service_role;
-

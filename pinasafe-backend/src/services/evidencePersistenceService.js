@@ -212,7 +212,7 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
       p_capture_latitude: captureLocation ? captureLocation.latitude : null,
       p_capture_longitude: captureLocation ? captureLocation.longitude : null,
       p_capture_accuracy: captureLocation ? captureLocation.accuracy : null,
-      p_capture_timestamp: captureLocation ? new Date(captureLocation.timestamp).toISOString() : null
+      p_captured_at: captureLocation ? captureLocation.capturedAt : null
     });
 
     if (error) throw error;

@@ -5,6 +5,7 @@ const { getClient, getEvidenceStorageBucket } = require('../config/database');
 const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
 const { validateUUID } = require('../middleware/validation');
 const { persistEvidenceImage } = require('../services/evidencePersistenceService');
+const { validateCaptureLocation } = require('../services/captureLocationContract');
 const { MAX_EVIDENCE_BYTES } = require('../services/evidenceStorageService');
 const safeLogger = require('../utils/safeLogger');
 
@@ -13,6 +14,12 @@ const SIGNED_URL_EXPIRES_IN = 300;
 const router = express.Router();
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const JPEG_MIME_TYPE = 'image/jpeg';
+const captureLocationFields = new Set([
+  'captureLatitude',
+  'captureLongitude',
+  'captureAccuracy',
+  'capturedAt'
+]);
 const protectedSessionFields = new Set([
   'owner_user_id',
   'ownerUserId',
@@ -142,6 +149,20 @@ const parseMultipartImage = (req, res, next) => {
   });
 };
 
+const requireCaptureLocation = (req, res, next) => {
+  if (Object.keys(req.body || {}).some((field) => !captureLocationFields.has(field))) {
+    return res.status(400).json({ error: 'Unexpected image upload field' });
+  }
+
+  const result = validateCaptureLocation(req.body);
+  if (!result.valid) {
+    return res.status(400).json({ error: 'Valid capture location metadata is required' });
+  }
+
+  req.captureLocation = result.captureLocation;
+  return next();
+};
+
 router.post('/sessions', authenticateToken, requireRole(['citizen']), rejectProtectedSessionFields, async (req, res) => {
   try {
     const id = uuidv4();
@@ -221,32 +242,14 @@ router.post(
   validateUUID('sessionId'),
   requireActiveOwnedSession,
   parseMultipartImage,
+  requireCaptureLocation,
   async (req, res) => {
     try {
-      const captureLatitude = req.body.captureLatitude != null ? parseFloat(req.body.captureLatitude) : null;
-      const captureLongitude = req.body.captureLongitude != null ? parseFloat(req.body.captureLongitude) : null;
-      const captureAccuracy = req.body.captureAccuracy != null ? parseFloat(req.body.captureAccuracy) : null;
-      const captureTimestamp = req.body.captureTimestamp != null ? Number(req.body.captureTimestamp) : null;
-
-      const captureLocation =
-        captureLatitude != null && captureLongitude != null
-          && Number.isFinite(captureLatitude) && captureLatitude >= -90 && captureLatitude <= 90
-          && Number.isFinite(captureLongitude) && captureLongitude >= -180 && captureLongitude <= 180
-          && (captureAccuracy == null || (Number.isFinite(captureAccuracy) && captureAccuracy >= 0))
-          && (captureTimestamp == null || (Number.isFinite(captureTimestamp) && captureTimestamp > 0))
-          ? {
-              latitude: captureLatitude,
-              longitude: captureLongitude,
-              accuracy: captureAccuracy,
-              timestamp: captureTimestamp
-            }
-          : null;
-
       const result = await persistEvidenceImage({
         imageBuffer: req.file.buffer,
         sessionId: req.params.sessionId,
         ownerUserId: req.user.id,
-        captureLocation
+        captureLocation: req.captureLocation
       });
 
       if (!result.accepted) {
@@ -339,7 +342,7 @@ router.get(
 
       const { data: evidenceRows, error: evidenceError } = await supabase
         .from('report_evidence')
-        .select('id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, capture_timestamp, created_at')
+        .select('id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, captured_at, created_at')
         .eq('emergency_report_id', reportId)
         .eq('status', 'bound');
 
@@ -379,7 +382,7 @@ router.get(
                   latitude: row.capture_latitude,
                   longitude: row.capture_longitude,
                   accuracy: row.capture_accuracy,
-                  timestamp: row.capture_timestamp
+                  timestamp: row.captured_at
                 }
               : null,
             createdAt: row.created_at,

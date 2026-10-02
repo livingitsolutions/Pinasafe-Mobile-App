@@ -47,6 +47,11 @@ const acceptedClassification = {
   reason: 'Fire confirmed',
   caption: 'Smoke visible'
 };
+const captureFields = {
+  captureLatitude: '10.5',
+  captureLongitude: '124.9',
+  capturedAt: '2026-10-02T00:00:00.000Z'
+};
 const durableSuccess = {
   accepted: true,
   evidenceId: '123e4567-e89b-12d3-a456-426614174009',
@@ -114,10 +119,19 @@ const activeSession = () => ({
   expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
 });
 
-const attachImage = (app, { field = 'image', buffer = validJpeg(), mimeType = 'image/jpeg', filename = 'private-original-name.jpg' } = {}) =>
-  request(app)
-    .post(`/api/evidence/sessions/${sessionId}/image`)
-    .attach(field, buffer, { filename, contentType: mimeType });
+const attachImage = (app, {
+  field = 'image',
+  buffer = validJpeg(),
+  mimeType = 'image/jpeg',
+  filename = 'private-original-name.jpg',
+  fields = captureFields
+} = {}) => {
+  let upload = request(app).post(`/api/evidence/sessions/${sessionId}/image`);
+  Object.entries(fields).forEach(([name, value]) => {
+    if (value !== undefined) upload = upload.field(name, value);
+  });
+  return upload.attach(field, buffer, { filename, contentType: mimeType });
+};
 
 describe('strict evidence multipart ingestion boundary', () => {
   beforeEach(() => {
@@ -158,7 +172,13 @@ describe('strict evidence multipart ingestion boundary', () => {
     expect(persistEvidenceImage).toHaveBeenCalledWith({
       imageBuffer: expect.any(Buffer),
       sessionId,
-      ownerUserId: citizen.id
+      ownerUserId: citizen.id,
+      captureLocation: {
+        latitude: 10.5,
+        longitude: 124.9,
+        accuracy: null,
+        capturedAt: '2026-10-02T00:00:00.000Z'
+      }
     });
   });
 
@@ -244,7 +264,13 @@ describe('strict evidence multipart ingestion boundary', () => {
     expect(persistEvidenceImage).toHaveBeenCalledWith({
       imageBuffer: image,
       sessionId,
-      ownerUserId: citizen.id
+      ownerUserId: citizen.id,
+      captureLocation: {
+        latitude: 10.5,
+        longitude: 124.9,
+        accuracy: null,
+        capturedAt: '2026-10-02T00:00:00.000Z'
+      }
     });
     expect(evidenceStorageService.uploadEvidenceObject).not.toHaveBeenCalled();
     expect(evidenceStorageService.deleteEvidenceObject).not.toHaveBeenCalled();
@@ -264,6 +290,20 @@ describe('strict evidence multipart ingestion boundary', () => {
     const response = await attachImage(buildApp(), { buffer: Buffer.from('not a jpeg') });
 
     expect(response.status).toBe(400);
+  });
+
+  test.each([
+    ['missing latitude', { ...captureFields, captureLatitude: undefined }],
+    ['missing longitude', { ...captureFields, captureLongitude: undefined }],
+    ['missing capturedAt', { ...captureFields, capturedAt: undefined }],
+    ['malformed latitude', { ...captureFields, captureLatitude: '10abc' }],
+    ['malformed timestamp', { ...captureFields, capturedAt: '2026-10-02T00:00:00' }]
+  ])('rejects %s before persistence', async (_, fields) => {
+    buildSessionQuery({ data: activeSession() });
+    const response = await attachImage(buildApp(), { fields });
+
+    expect(response.status).toBe(400);
+    expect(persistEvidenceImage).not.toHaveBeenCalled();
   });
 
   test('maps orchestrator JPEG validation failure to a generic 400', async () => {
@@ -312,7 +352,13 @@ describe('strict evidence multipart ingestion boundary', () => {
     expect(persistEvidenceImage).toHaveBeenCalledWith({
       imageBuffer: image,
       sessionId,
-      ownerUserId: citizen.id
+      ownerUserId: citizen.id,
+      captureLocation: {
+        latitude: 10.5,
+        longitude: 124.9,
+        accuracy: null,
+        capturedAt: '2026-10-02T00:00:00.000Z'
+      }
     });
   });
 
@@ -396,6 +442,9 @@ describe('strict evidence multipart ingestion boundary', () => {
     buildSessionQuery({ data: activeSession() });
     const response = await request(buildApp())
       .post(`/api/evidence/sessions/${sessionId}/image`)
+      .field('captureLatitude', '10.5')
+      .field('captureLongitude', '124.9')
+      .field('capturedAt', '2026-10-02T00:00:00.000Z')
       .field('label', 'road')
       .field('confidence', '1')
       .attach('image', validJpeg(), { filename: 'client.jpg', contentType: 'image/jpeg' });

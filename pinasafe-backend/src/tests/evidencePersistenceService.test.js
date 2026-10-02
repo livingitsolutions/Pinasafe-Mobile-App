@@ -90,7 +90,13 @@ const buildDatabaseMock = ({ reserve = reserveResult(), finalize = finalizeResul
   return { rpc, from, query };
 };
 
-const runPersistence = () => persistEvidenceImage({ imageBuffer, sessionId, ownerUserId });
+const captureLocation = {
+  latitude: 10.5,
+  longitude: 124.9,
+  accuracy: 12,
+  capturedAt: '2026-10-02T00:00:00.000Z'
+};
+const runPersistence = () => persistEvidenceImage({ imageBuffer, sessionId, ownerUserId, captureLocation });
 
 const expectPersistenceCode = async (promise, code) => {
   await expect(promise).rejects.toMatchObject({
@@ -193,6 +199,20 @@ describe('evidence persistence orchestration', () => {
     expect(rpc.mock.invocationCallOrder[0]).toBeLessThan(uploadEvidenceObject.mock.invocationCallOrder[0]);
     expect(uploadEvidenceObject.mock.invocationCallOrder[0]).toBeLessThan(rpc.mock.invocationCallOrder[1]);
     expect(result).toEqual(successResult);
+  });
+
+  test('finalization sends the active capture RPC arguments exactly', async () => {
+    const { rpc } = buildDatabaseMock();
+
+    await runPersistence();
+
+    expect(rpc.mock.calls[1][1]).toMatchObject({
+      p_capture_latitude: 10.5,
+      p_capture_longitude: 124.9,
+      p_capture_accuracy: 12,
+      p_captured_at: '2026-10-02T00:00:00.000Z'
+    });
+    expect(rpc.mock.calls[1][1]).not.toHaveProperty('p_capture_timestamp');
   });
 
   test('reservation session-unavailable maps internally and never uploads', async () => {

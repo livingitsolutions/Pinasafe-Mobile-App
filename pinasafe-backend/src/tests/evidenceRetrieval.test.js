@@ -100,6 +100,10 @@ const evidenceRow = (overrides = {}) => ({
   classification_label: 'fire',
   classification_confidence: 0.94,
   classification_caption: null,
+  capture_latitude: null,
+  capture_longitude: null,
+  capture_accuracy: null,
+  captured_at: null,
   created_at: '2026-09-29T00:00:00.000Z',
   ...overrides
 });
@@ -312,6 +316,41 @@ describe('GET /evidence/reports/:reportId', () => {
     expect(response.body.data[0]).toHaveProperty('classification');
     expect(response.body.data[0]).toHaveProperty('createdAt');
     expect(response.body.data[0]).toHaveProperty('expiresIn', 300);
+  });
+
+  test('retrieves capture location from captured_at and keeps legacy rows readable', async () => {
+    const reportQuery = buildQuery({ data: reportRow(), error: null });
+    const capturedAt = '2026-10-02T00:00:00.000Z';
+    const evidenceQuery = buildEvidenceQuery([evidenceRow({
+      capture_latitude: 10.5,
+      capture_longitude: 124.9,
+      capture_accuracy: 12,
+      captured_at: capturedAt
+    })]);
+    mockFromSequence([reportQuery, evidenceQuery]);
+
+    const response = await request(buildApp(admin))
+      .get(`/evidence/reports/${REPORT_ID}`);
+
+    expect(response.status).toBe(200);
+    expect(evidenceQuery.select).toHaveBeenCalledWith(
+      'id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, captured_at, created_at'
+    );
+    expect(response.body.data[0].captureLocation).toEqual({
+      latitude: 10.5,
+      longitude: 124.9,
+      accuracy: 12,
+      timestamp: capturedAt
+    });
+
+    const legacyReportQuery = buildQuery({ data: reportRow(), error: null });
+    const legacyEvidenceQuery = buildEvidenceQuery([evidenceRow()]);
+    mockFromSequence([legacyReportQuery, legacyEvidenceQuery]);
+    const legacyResponse = await request(buildApp(admin))
+      .get(`/evidence/reports/${REPORT_ID}`);
+
+    expect(legacyResponse.status).toBe(200);
+    expect(legacyResponse.body.data[0].captureLocation).toBeNull();
   });
 
   test('17. super-admin can retrieve evidence for any report', async () => {
