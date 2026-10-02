@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isClientRuntime } from '@/utils/clientRuntime';
 import { Platform } from 'react-native';
+import { CaptureLocation, isValidCaptureLocation } from '@/utils/evidenceFlow';
 
 interface APIResponse<T = unknown> {
   data?: T;
@@ -96,6 +97,7 @@ export interface PrivateEvidenceItem {
   classification: { label: 'fire' | 'road'; confidence: number | null; caption: string | null };
   createdAt: string;
   expiresIn: number;
+  captureLocation?: CaptureLocation | null;
 }
 
 class APIService {
@@ -309,8 +311,11 @@ class APIService {
   async uploadEvidenceImage(
     sessionId: string,
     image: { uri: string; name?: string; type?: string },
-    captureLocation?: { latitude: number; longitude: number; accuracy?: number; timestamp: number }
+    captureLocation: CaptureLocation
   ): Promise<APIResponse<{ data: EvidenceUploadResult }>> {
+    if (!isValidCaptureLocation(captureLocation)) {
+      throw new Error('Valid capture location is required before uploading evidence.');
+    }
     const formData = new FormData();
     const name = image.name || 'evidence.jpg';
     const type = image.type || 'image/jpeg';
@@ -340,14 +345,12 @@ class APIService {
       } as unknown as Blob);
     }
 
-    if (captureLocation) {
-      formData.append('captureLatitude', String(captureLocation.latitude));
-      formData.append('captureLongitude', String(captureLocation.longitude));
-      if (captureLocation.accuracy != null) {
-        formData.append('captureAccuracy', String(captureLocation.accuracy));
-      }
-      formData.append('captureTimestamp', String(captureLocation.timestamp));
+    formData.append('captureLatitude', String(captureLocation.latitude));
+    formData.append('captureLongitude', String(captureLocation.longitude));
+    if (captureLocation.accuracy != null) {
+      formData.append('captureAccuracy', String(captureLocation.accuracy));
     }
+    formData.append('capturedAt', captureLocation.capturedAt);
 
     return this.request(`/evidence/sessions/${sessionId}/image`, {
       method: 'POST',
