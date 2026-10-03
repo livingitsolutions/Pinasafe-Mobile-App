@@ -334,7 +334,7 @@ describe('GET /evidence/reports/:reportId', () => {
 
     expect(response.status).toBe(200);
     expect(evidenceQuery.select).toHaveBeenCalledWith(
-      'id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, captured_at, created_at'
+      'id, upload_session_id, evidence_role, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, captured_at, created_at'
     );
     expect(response.body.data[0].captureLocation).toEqual({
       latitude: 10.5,
@@ -351,6 +351,36 @@ describe('GET /evidence/reports/:reportId', () => {
 
     expect(legacyResponse.status).toBe(200);
     expect(legacyResponse.body.data[0].captureLocation).toBeNull();
+  });
+
+  test('retrieves supplementary evidence with role, provenance, and no classification', async () => {
+    const reportQuery = buildQuery({ data: reportRow(), error: null });
+    const evidenceQuery = buildEvidenceQuery([evidenceRow({
+      evidence_role: 'supplementary',
+      classification_label: null,
+      classification_confidence: null,
+      classification_caption: null,
+      capture_latitude: 10.6,
+      capture_longitude: 125,
+      capture_accuracy: 8,
+      captured_at: '2026-10-02T00:05:00.000Z'
+    })]);
+    mockFromSequence([reportQuery, evidenceQuery]);
+
+    const response = await request(buildApp(admin))
+      .get(`/evidence/reports/${REPORT_ID}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data[0]).toMatchObject({
+      evidenceRole: 'supplementary',
+      classification: null,
+      captureLocation: {
+        latitude: 10.6,
+        longitude: 125,
+        accuracy: 8,
+        timestamp: '2026-10-02T00:05:00.000Z'
+      }
+    });
   });
 
   test('17. super-admin can retrieve evidence for any report', async () => {

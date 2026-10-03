@@ -36,17 +36,18 @@ describe('capture-time location contract', () => {
 
   test('two captures retain independent metadata', async () => {
     const first = await captureWithLocation(async () => 'first', async () => currentLocation());
-    const second = await captureWithLocation(async () => 'second', async () => ({ ...currentLocation(), coords: { latitude: 2, longitude: 3 } }));
+    const second = await captureWithLocation(async () => 'second', async () => ({ ...currentLocation(), timestamp: now + 10, coords: { latitude: 2, longitude: 3 } }));
     expect(first.captureLocation).not.toEqual(second.captureLocation);
     expect(first.photo).toBe('first');
     expect(second.photo).toBe('second');
+    expect(second.captureLocation.capturedAt).not.toBe(first.captureLocation.capturedAt);
   });
 
   test('report canonical location is the first accepted capture, not a later capture or rejection', () => {
     const items: EvidenceItem[] = [
-      { localId: 'rejected', uri: 'rejected', status: 'rejected', captureLocation: { ...captureLocation, latitude: 4 } },
-      { localId: 'first', uri: 'first', status: 'accepted', captureLocation },
-      { localId: 'second', uri: 'second', status: 'accepted', captureLocation: { ...captureLocation, latitude: 2 } },
+      { localId: 'rejected', uri: 'rejected', role: 'primary', status: 'rejected', captureLocation: { ...captureLocation, latitude: 4 } },
+      { localId: 'first', uri: 'first', role: 'primary', status: 'accepted', captureLocation },
+      { localId: 'second', uri: 'second', role: 'supplementary', status: 'accepted', captureLocation: { ...captureLocation, latitude: 2 } },
     ];
     expect(getFirstAcceptedCaptureLocation(items)).toBe(captureLocation);
     expect(getFirstAcceptedCaptureLocation([])).toBeNull();

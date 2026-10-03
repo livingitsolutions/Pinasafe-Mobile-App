@@ -18,7 +18,8 @@ const captureLocationFields = new Set([
   'captureLatitude',
   'captureLongitude',
   'captureAccuracy',
-  'capturedAt'
+  'capturedAt',
+  'evidenceRole'
 ]);
 const protectedSessionFields = new Set([
   'owner_user_id',
@@ -85,8 +86,8 @@ const singleImageParser = multer({
   limits: {
     fileSize: MAX_EVIDENCE_BYTES + 1,
     files: 1,
-    fields: 4,
-    parts: 6
+    fields: 5,
+    parts: 7
   },
   fileFilter: (req, file, callback) => {
     if (file.mimetype !== JPEG_MIME_TYPE) {
@@ -159,7 +160,13 @@ const requireCaptureLocation = (req, res, next) => {
     return res.status(400).json({ error: 'Valid capture location metadata is required' });
   }
 
+  const evidenceRole = req.body.evidenceRole || 'primary';
+  if (!['primary', 'supplementary'].includes(evidenceRole)) {
+    return res.status(400).json({ error: 'Invalid evidence role' });
+  }
+
   req.captureLocation = result.captureLocation;
+  req.evidenceRole = evidenceRole;
   return next();
 };
 
@@ -249,11 +256,18 @@ router.post(
         imageBuffer: req.file.buffer,
         sessionId: req.params.sessionId,
         ownerUserId: req.user.id,
-        captureLocation: req.captureLocation
+        captureLocation: req.captureLocation,
+        evidenceRole: req.evidenceRole
       });
 
       if (!result.accepted) {
-        return res.status(200).json({ data: result.classification });
+        return res.status(200).json({
+          data: {
+            accepted: false,
+            evidenceRole: result.evidenceRole,
+            classification: result.classification
+          }
+        });
       }
 
       return res.status(201).json({ data: result });
@@ -342,7 +356,7 @@ router.get(
 
       const { data: evidenceRows, error: evidenceError } = await supabase
         .from('report_evidence')
-        .select('id, upload_session_id, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, captured_at, created_at')
+        .select('id, upload_session_id, evidence_role, storage_path, mime_type, byte_size, width, height, classification_label, classification_confidence, classification_caption, capture_latitude, capture_longitude, capture_accuracy, captured_at, created_at')
         .eq('emergency_report_id', reportId)
         .eq('status', 'bound');
 
@@ -367,12 +381,13 @@ router.get(
 
           return {
             id: row.id,
+            evidenceRole: row.evidence_role || 'primary',
             url: signedUrl,
             mimeType: row.mime_type,
             byteSize: row.byte_size,
             width: row.width,
             height: row.height,
-            classification: {
+            classification: row.evidence_role === 'supplementary' ? null : {
               label: row.classification_label,
               confidence: row.classification_confidence,
               caption: row.classification_caption

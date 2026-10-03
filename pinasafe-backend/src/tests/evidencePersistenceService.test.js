@@ -59,6 +59,7 @@ const rejectedClassification = {
 const successResult = {
   accepted: true,
   evidenceId,
+  evidenceRole: 'primary',
   classification: {
     label: 'fire',
     confidence: 0.1,
@@ -151,6 +152,7 @@ describe('evidence persistence orchestration', () => {
 
     await expect(runPersistence()).resolves.toEqual({
       accepted: false,
+      evidenceRole: 'primary',
       classification: rejectedClassification
     });
 
@@ -168,6 +170,25 @@ describe('evidence persistence orchestration', () => {
 
     expect(getClient().rpc).not.toHaveBeenCalled();
     expect(uploadEvidenceObject).not.toHaveBeenCalled();
+  });
+
+  test('classifier recovery retries before creating exactly one reservation and finalization', async () => {
+    const { rpc } = buildDatabaseMock();
+    classifyEvidenceImage
+      .mockRejectedValueOnce(new Error('classifier network unavailable'))
+      .mockResolvedValueOnce(acceptedClassification);
+
+    await expectPersistenceCode(runPersistence(), 'CLASSIFIER_UNAVAILABLE');
+    expect(rpc).not.toHaveBeenCalled();
+    expect(uploadEvidenceObject).not.toHaveBeenCalled();
+
+    await expect(runPersistence()).resolves.toEqual(successResult);
+
+    expect(classifyEvidenceImage).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      'reserve_report_evidence',
+      'finalize_report_evidence_upload'
+    ]);
   });
 
   test('generates server evidence ID and reserves with trusted bucket/path before upload', async () => {
@@ -188,7 +209,8 @@ describe('evidence persistence orchestration', () => {
       p_storage_bucket: 'private-evidence',
       p_storage_path: `evidence/${sessionId}/${evidenceId}.jpg`,
       p_mime_type: 'image/jpeg',
-      p_byte_size: imageBuffer.length
+      p_byte_size: imageBuffer.length,
+      p_evidence_role: 'primary'
     });
     expect(uploadEvidenceObject).toHaveBeenCalledWith({
       uploadSessionId: sessionId,
@@ -210,9 +232,40 @@ describe('evidence persistence orchestration', () => {
       p_capture_latitude: 10.5,
       p_capture_longitude: 124.9,
       p_capture_accuracy: 12,
-      p_captured_at: '2026-10-02T00:00:00.000Z'
+      p_captured_at: '2026-10-02T00:00:00.000Z',
+      p_evidence_role: 'primary'
     });
     expect(rpc.mock.calls[1][1]).not.toHaveProperty('p_capture_timestamp');
+  });
+
+  test('supplementary evidence persists with capture metadata without classification', async () => {
+    const { rpc } = buildDatabaseMock();
+
+    await expect(persistEvidenceImage({
+      imageBuffer,
+      sessionId,
+      ownerUserId,
+      captureLocation,
+      evidenceRole: 'supplementary'
+    })).resolves.toEqual({
+      accepted: true,
+      evidenceId,
+      evidenceRole: 'supplementary'
+    });
+
+    expect(classifyEvidenceImage).not.toHaveBeenCalled();
+    expect(uploadEvidenceObject).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls[0][1].p_evidence_role).toBe('supplementary');
+    expect(rpc.mock.calls[1][1]).toMatchObject({
+      p_classification_label: null,
+      p_classification_confidence: null,
+      p_classification_reason: null,
+      p_classification_caption: null,
+      p_capture_latitude: captureLocation.latitude,
+      p_capture_longitude: captureLocation.longitude,
+      p_captured_at: captureLocation.capturedAt,
+      p_evidence_role: 'supplementary'
+    });
   });
 
   test('reservation session-unavailable maps internally and never uploads', async () => {
@@ -338,7 +391,7 @@ describe('evidence persistence orchestration', () => {
     } else {
       expect(result).toMatchObject({ code: 'PERSISTENCE_UNAVAILABLE' });
       expect(from).toHaveBeenCalledWith('report_evidence');
-      expect(query.select).toHaveBeenCalledWith('id, status, accepted_at');
+      expect(query.select).toHaveBeenCalledWith('id, status, accepted_at, evidence_role');
       expect(query.eq).toHaveBeenNthCalledWith(1, 'id', evidenceId);
       expect(query.eq).toHaveBeenNthCalledWith(2, 'upload_session_id', sessionId);
       expect(query.eq).toHaveBeenNthCalledWith(3, 'uploader_user_id', ownerUserId);
@@ -354,9 +407,10 @@ describe('evidence persistence orchestration', () => {
   });
 
   test.each([
-    ['accepted', { id: evidenceId, status: 'accepted', accepted_at: '2026-09-26T00:00:00.000Z' }, 'ROW_ACCEPTED'],
-    ['accepted without timestamp', { id: evidenceId, status: 'accepted', accepted_at: null }, 'ROW_OTHER'],
-    ['accepted with missing timestamp field', { id: evidenceId, status: 'accepted' }, 'ROW_OTHER'],
+    ['accepted', { id: evidenceId, status: 'accepted', accepted_at: '2026-09-26T00:00:00.000Z', evidence_role: 'primary' }, 'ROW_ACCEPTED'],
+    ['accepted with role mismatch', { id: evidenceId, status: 'accepted', accepted_at: '2026-09-26T00:00:00.000Z', evidence_role: 'supplementary' }, 'ROW_OTHER'],
+    ['accepted without timestamp', { id: evidenceId, status: 'accepted', accepted_at: null, evidence_role: 'primary' }, 'ROW_OTHER'],
+    ['accepted with missing timestamp field', { id: evidenceId, status: 'accepted', evidence_role: 'primary' }, 'ROW_OTHER'],
     ['uploading', { id: evidenceId, status: 'uploading', accepted_at: null }, 'ROW_UPLOADING'],
     ['other status', { id: evidenceId, status: 'expired', accepted_at: '2026-09-26T00:00:00.000Z' }, 'ROW_OTHER'],
     ['missing', null, 'ROW_MISSING']
@@ -368,7 +422,7 @@ describe('evidence persistence orchestration', () => {
     const result = await persistEvidenceImage({ imageBuffer, sessionId, ownerUserId }).catch((error) => error);
 
     expect(from).toHaveBeenCalledWith('report_evidence');
-    expect(query.select).toHaveBeenCalledWith('id, status, accepted_at');
+    expect(query.select).toHaveBeenCalledWith('id, status, accepted_at, evidence_role');
     expect(query.eq).toHaveBeenNthCalledWith(1, 'id', evidenceId);
     expect(query.eq).toHaveBeenNthCalledWith(2, 'upload_session_id', sessionId);
     expect(query.eq).toHaveBeenNthCalledWith(3, 'uploader_user_id', ownerUserId);
@@ -404,7 +458,8 @@ describe('evidence persistence orchestration', () => {
       reconciliation: reconciliationResult({
         id: evidenceId,
         status: 'accepted',
-        accepted_at: '2026-09-26T00:00:00.000Z'
+        accepted_at: '2026-09-26T00:00:00.000Z',
+        evidence_role: 'primary'
       })
     });
 

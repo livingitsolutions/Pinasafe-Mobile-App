@@ -51,11 +51,11 @@ const compensateStorageAndReservation = async ({ sessionId, ownerUserId, evidenc
   return bestEffortCancelReservation({ sessionId, ownerUserId, evidenceId });
 };
 
-const reconcileEvidenceRow = async ({ sessionId, ownerUserId, evidenceId }) => {
+const reconcileEvidenceRow = async ({ sessionId, ownerUserId, evidenceId, evidenceRole }) => {
   try {
     const { data, error } = await getClient()
       .from('report_evidence')
-      .select('id, status, accepted_at')
+      .select('id, status, accepted_at, evidence_role')
       .eq('id', evidenceId)
       .eq('upload_session_id', sessionId)
       .eq('uploader_user_id', ownerUserId)
@@ -71,6 +71,7 @@ const reconcileEvidenceRow = async ({ sessionId, ownerUserId, evidenceId }) => {
       data.status === 'accepted'
       && data.accepted_at !== null
       && data.accepted_at !== undefined
+      && data.evidence_role === evidenceRole
     ) {
       return { outcome: 'ROW_ACCEPTED' };
     }
@@ -94,10 +95,11 @@ const classificationProjection = (classification) => ({
   caption: classification.caption
 });
 
-const acceptedResult = (evidenceId, classification) => ({
+const acceptedResult = (evidenceId, evidenceRole, classification) => ({
   accepted: true,
   evidenceId,
-  classification: classificationProjection(classification)
+  evidenceRole,
+  ...(classification ? { classification: classificationProjection(classification) } : {})
 });
 
 const handleFinalizationFailure = async ({
@@ -105,6 +107,7 @@ const handleFinalizationFailure = async ({
   sessionId,
   ownerUserId,
   evidenceId,
+  evidenceRole,
   classification
 }) => {
   if (result === 'SESSION_UNAVAILABLE') {
@@ -113,9 +116,9 @@ const handleFinalizationFailure = async ({
     throw persistenceError('SESSION_UNAVAILABLE');
   }
 
-  const reconciliation = await reconcileEvidenceRow({ sessionId, ownerUserId, evidenceId });
+  const reconciliation = await reconcileEvidenceRow({ sessionId, ownerUserId, evidenceId, evidenceRole });
   if (reconciliation.outcome === 'ROW_ACCEPTED') {
-    return acceptedResult(evidenceId, classification);
+    return acceptedResult(evidenceId, evidenceRole, classification);
   }
 
   if (reconciliation.outcome === 'ROW_UPLOADING') {
@@ -125,7 +128,17 @@ const handleFinalizationFailure = async ({
   throw persistenceError('PERSISTENCE_UNAVAILABLE');
 };
 
-const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captureLocation = null }) => {
+const persistEvidenceImage = async ({
+  imageBuffer,
+  sessionId,
+  ownerUserId,
+  captureLocation = null,
+  evidenceRole = 'primary'
+}) => {
+  if (!['primary', 'supplementary'].includes(evidenceRole)) {
+    throw persistenceError('INVALID_EVIDENCE_ROLE');
+  }
+
   let dimensions;
   try {
     dimensions = getJpegDimensions(imageBuffer);
@@ -133,15 +146,17 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
     throw persistenceError('INVALID_JPEG');
   }
 
-  let classification;
-  try {
-    classification = await classifyEvidenceImage(imageBuffer);
-  } catch (error) {
-    throw persistenceError('CLASSIFIER_UNAVAILABLE');
-  }
+  let classification = null;
+  if (evidenceRole === 'primary') {
+    try {
+      classification = await classifyEvidenceImage(imageBuffer);
+    } catch (error) {
+      throw persistenceError('CLASSIFIER_UNAVAILABLE');
+    }
 
-  if (!classification.accepted) {
-    return { accepted: false, classification };
+    if (!classification.accepted) {
+      return { accepted: false, evidenceRole, classification };
+    }
   }
 
   const evidenceId = uuidv4();
@@ -158,7 +173,8 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
       p_storage_bucket: storageBucket,
       p_storage_path: storagePath,
       p_mime_type: EVIDENCE_MIME_TYPE,
-      p_byte_size: imageBuffer.length
+      p_byte_size: imageBuffer.length,
+      p_evidence_role: evidenceRole
     });
 
     if (error) throw error;
@@ -205,14 +221,15 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
       p_evidence_id: evidenceId,
       p_width: dimensions.width,
       p_height: dimensions.height,
-      p_classification_label: classification.label,
-      p_classification_confidence: classification.confidence,
-      p_classification_reason: classification.reason,
-      p_classification_caption: classification.caption,
+      p_classification_label: classification ? classification.label : null,
+      p_classification_confidence: classification ? classification.confidence : null,
+      p_classification_reason: classification ? classification.reason : null,
+      p_classification_caption: classification ? classification.caption : null,
       p_capture_latitude: captureLocation ? captureLocation.latitude : null,
       p_capture_longitude: captureLocation ? captureLocation.longitude : null,
       p_capture_accuracy: captureLocation ? captureLocation.accuracy : null,
-      p_captured_at: captureLocation ? captureLocation.capturedAt : null
+      p_captured_at: captureLocation ? captureLocation.capturedAt : null,
+      p_evidence_role: evidenceRole
     });
 
     if (error) throw error;
@@ -224,12 +241,13 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
       sessionId,
       ownerUserId,
       evidenceId,
+      evidenceRole,
       classification
     });
   }
 
   if (finalizationResult === 'FINALIZED') {
-    return acceptedResult(evidenceId, classification);
+    return acceptedResult(evidenceId, evidenceRole, classification);
   }
 
   if (finalizationResult === 'SESSION_UNAVAILABLE') {
@@ -238,6 +256,7 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
       sessionId,
       ownerUserId,
       evidenceId,
+      evidenceRole,
       classification
     });
   }
@@ -249,6 +268,7 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
       sessionId,
       ownerUserId,
       evidenceId,
+      evidenceRole,
       classification
     });
   }
@@ -259,6 +279,7 @@ const persistEvidenceImage = async ({ imageBuffer, sessionId, ownerUserId, captu
     sessionId,
     ownerUserId,
     evidenceId,
+    evidenceRole,
     classification
   });
 };

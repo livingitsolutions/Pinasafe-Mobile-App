@@ -50,11 +50,13 @@ const acceptedClassification = {
 const captureFields = {
   captureLatitude: '10.5',
   captureLongitude: '124.9',
-  capturedAt: '2026-10-02T00:00:00.000Z'
+  capturedAt: '2026-10-02T00:00:00.000Z',
+  evidenceRole: 'primary'
 };
 const durableSuccess = {
   accepted: true,
   evidenceId: '123e4567-e89b-12d3-a456-426614174009',
+  evidenceRole: 'primary',
   classification: acceptedClassification
 };
 
@@ -178,7 +180,8 @@ describe('strict evidence multipart ingestion boundary', () => {
         longitude: 124.9,
         accuracy: null,
         capturedAt: '2026-10-02T00:00:00.000Z'
-      }
+      },
+      evidenceRole: 'primary'
     });
   });
 
@@ -270,7 +273,8 @@ describe('strict evidence multipart ingestion boundary', () => {
         longitude: 124.9,
         accuracy: null,
         capturedAt: '2026-10-02T00:00:00.000Z'
-      }
+      },
+      evidenceRole: 'primary'
     });
     expect(evidenceStorageService.uploadEvidenceObject).not.toHaveBeenCalled();
     expect(evidenceStorageService.deleteEvidenceObject).not.toHaveBeenCalled();
@@ -283,6 +287,28 @@ describe('strict evidence multipart ingestion boundary', () => {
     const response = await attachImage(buildApp(), { mimeType: 'image/png' });
 
     expect(response.status).toBe(400);
+  });
+
+  test('accepts supplementary role with required per-image capture metadata', async () => {
+    buildSessionQuery({ data: activeSession() });
+    persistEvidenceImage.mockResolvedValue({
+      accepted: true,
+      evidenceId: '123e4567-e89b-12d3-a456-426614174010',
+      evidenceRole: 'supplementary'
+    });
+
+    const response = await attachImage(buildApp(), {
+      fields: { ...captureFields, evidenceRole: 'supplementary' }
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.evidenceRole).toBe('supplementary');
+    expect(response.body.data).not.toHaveProperty('classification');
+    expect(persistEvidenceImage).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUserId: citizen.id,
+      evidenceRole: 'supplementary',
+      captureLocation: expect.objectContaining({ latitude: 10.5, longitude: 124.9 })
+    }));
   });
 
   test('rejects JPEG MIME metadata without JPEG markers', async () => {
@@ -358,7 +384,8 @@ describe('strict evidence multipart ingestion boundary', () => {
         longitude: 124.9,
         accuracy: null,
         capturedAt: '2026-10-02T00:00:00.000Z'
-      }
+      },
+      evidenceRole: 'primary'
     });
   });
 
@@ -401,12 +428,14 @@ describe('strict evidence multipart ingestion boundary', () => {
     ['uncertain action', { accepted: false, label: 'fire', confidence: 0.9, status: 'valid', action: 'uncertain', reason: null, caption: null }]
   ])('returns HTTP 200 for legitimate model rejection: %s', async (_, rejectedClassification) => {
     buildSessionQuery({ data: activeSession() });
-    persistEvidenceImage.mockResolvedValue({ accepted: false, classification: rejectedClassification });
+    persistEvidenceImage.mockResolvedValue({ accepted: false, evidenceRole: 'primary', classification: rejectedClassification });
 
     const response = await attachImage(buildApp());
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ data: rejectedClassification });
+    expect(response.body).toEqual({
+      data: { accepted: false, evidenceRole: 'primary', classification: rejectedClassification }
+    });
   });
 
   test('returns a generic 503 when classification infrastructure fails', async () => {

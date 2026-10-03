@@ -23,6 +23,8 @@ const BINDING_ERROR_RESPONSES = {
   INVALID_REPORTER_ID: [400, 'Invalid emergency report or evidence'],
   INVALID_CLASSIFICATION: [400, 'Invalid emergency report or evidence'],
   CLASSIFICATION_MISMATCH: [400, 'Invalid emergency report or evidence'],
+  PRIMARY_EVIDENCE_INVALID: [400, 'A valid primary evidence image is required'],
+  SUPPLEMENTARY_EVIDENCE_INVALID: [400, 'Supplementary evidence is invalid'],
   EVIDENCE_CAPACITY_INVALID: [400, 'Invalid emergency report or evidence'],
   SESSION_UNAVAILABLE: [404, 'Evidence upload session unavailable'],
   SESSION_EXPIRED: [409, 'Emergency report conflicts with evidence session'],

@@ -2,6 +2,7 @@ import type { EvidenceClassification } from '@/services/apiService';
 import type { LocationData } from '@/hooks/locationService';
 
 export type IncidentType = 'road' | 'fire';
+export type EvidenceRole = 'primary' | 'supplementary';
 
 export type CaptureLocation = {
   latitude: number;
@@ -14,10 +15,146 @@ export type CaptureLocation = {
 export type EvidenceItem = {
   localId: string;
   uri: string;
+  role: EvidenceRole;
   status: 'uploading' | 'accepted' | 'rejected' | 'error';
   classification?: EvidenceClassification;
   reason?: string;
   captureLocation: CaptureLocation;
+};
+
+export type EvidenceFlowStage = 'capture' | 'verify' | 'supplementary' | 'review' | 'success';
+
+export const CLASSIFICATION_UNAVAILABLE_MESSAGE = 'AI classification is currently unavailable. This photo was not accepted. Retake it to try again.';
+export const CLASSIFICATION_RECOVERY_LABEL = 'Retake / capture another photo';
+export const CLASSIFICATION_RETRY_LABEL = 'Try Classification Again';
+
+export const getClassificationRecoveryContent = (unavailable: boolean, retryAvailable = false) => unavailable
+  ? {
+      title: 'Classification unavailable',
+      message: CLASSIFICATION_UNAVAILABLE_MESSAGE,
+      actionLabel: CLASSIFICATION_RECOVERY_LABEL,
+      retryLabel: retryAvailable ? CLASSIFICATION_RETRY_LABEL : null,
+    }
+  : null;
+
+export type ClassificationRecoveryTransition = {
+  stage: EvidenceFlowStage;
+  showCamera: boolean;
+  classificationUnavailable: boolean;
+};
+
+export const classificationFailureTransition = (): ClassificationRecoveryTransition => ({
+  stage: 'capture',
+  showCamera: false,
+  classificationUnavailable: true,
+});
+
+export const retryClassificationTransition = (): ClassificationRecoveryTransition => ({
+  stage: 'capture',
+  showCamera: false,
+  classificationUnavailable: false,
+});
+
+export const retakeCaptureTransition = (evidenceRole: EvidenceRole): ClassificationRecoveryTransition => ({
+  stage: evidenceRole === 'primary' ? 'capture' : 'supplementary',
+  showCamera: true,
+  classificationUnavailable: false,
+});
+
+export const acceptedClassificationTransition = () => ({ stage: 'verify' as const });
+
+export const discardFailedCapture = (items: EvidenceItem[], failedLocalId: string) =>
+  items.filter(item => item.localId !== failedLocalId);
+
+export const buildPrimaryClassificationRetry = (
+  item: EvidenceItem | null,
+  uploadSessionId: string | null
+) => item?.role === 'primary'
+  && item.status === 'error'
+  && uploadSessionId
+  ? {
+      uploadSessionId,
+      image: { uri: item.uri },
+      captureLocation: item.captureLocation,
+      evidenceRole: 'primary' as const,
+      localId: item.localId,
+    }
+  : null;
+
+export type EvidenceUploadDecision =
+  | { kind: 'accepted-primary'; evidenceId: string; classification: Omit<EvidenceClassification, 'accepted'> }
+  | { kind: 'accepted-supplementary'; evidenceId: string }
+  | { kind: 'rejected-primary'; classification: EvidenceClassification }
+  | { kind: 'unavailable' };
+
+const isClassificationDetails = (value: unknown) => {
+  if (!value || typeof value !== 'object') return false;
+  const classification = value as Record<string, unknown>;
+  return ['fire', 'road', 'other'].includes(String(classification.label))
+    && (classification.confidence === null
+      || (typeof classification.confidence === 'number'
+        && Number.isFinite(classification.confidence)
+        && classification.confidence >= 0
+        && classification.confidence <= 1))
+    && ['valid', 'invalid'].includes(String(classification.status))
+    && ['accept', 'reject', 'uncertain'].includes(String(classification.action))
+    && (classification.reason === null || typeof classification.reason === 'string')
+    && (classification.caption === null || typeof classification.caption === 'string');
+};
+
+export const parseEvidenceUploadDecision = (value: unknown): EvidenceUploadDecision => {
+  if (!value || typeof value !== 'object') return { kind: 'unavailable' };
+  const response = value as Record<string, unknown>;
+
+  if (response.accepted === true) {
+    if (typeof response.evidenceId !== 'string' || response.evidenceId.length === 0) {
+      return { kind: 'unavailable' };
+    }
+
+    if (response.evidenceRole === 'supplementary') {
+      return Object.prototype.hasOwnProperty.call(response, 'classification')
+        ? { kind: 'unavailable' }
+        : { kind: 'accepted-supplementary', evidenceId: response.evidenceId };
+    }
+
+    const classification = response.classification;
+    if (response.evidenceRole === 'primary' && isClassificationDetails(classification)) {
+      const details = classification as Record<string, unknown>;
+      if (
+        ['fire', 'road'].includes(String(details.label))
+        && details.status === 'valid'
+        && details.action === 'accept'
+        && details.accepted !== false
+      ) {
+        return {
+          kind: 'accepted-primary',
+          evidenceId: response.evidenceId,
+          classification: details as unknown as Omit<EvidenceClassification, 'accepted'>,
+        };
+      }
+    }
+    return { kind: 'unavailable' };
+  }
+
+  if (
+    response.accepted === false
+    && response.evidenceRole === 'primary'
+    && isClassificationDetails(response.classification)
+  ) {
+    return {
+      kind: 'rejected-primary',
+      classification: response.classification as EvidenceClassification,
+    };
+  }
+
+  if (response.accepted === false && response.evidenceRole === undefined && isClassificationDetails(response)) {
+    return {
+      kind: 'rejected-primary',
+      classification: response as unknown as EvidenceClassification,
+    };
+  }
+
+  return { kind: 'unavailable' };
 };
 
 export const isValidCaptureLocation = (location: CaptureLocation | null | undefined): location is CaptureLocation => {
@@ -54,13 +191,48 @@ export const captureWithLocation = async <Photo>(
   return { photo, captureLocation };
 };
 
+export const getFirstAcceptedPrimaryEvidence = (items: EvidenceItem[]) =>
+  items.find(item => item.role === 'primary' && item.status === 'accepted') ?? null;
+
 export const getFirstAcceptedCaptureLocation = (items: EvidenceItem[]) =>
-  items.find(item => item.status === 'accepted')?.captureLocation ?? null;
+  getFirstAcceptedPrimaryEvidence(items)?.captureLocation ?? null;
 
 export const MAX_ACCEPTED_EVIDENCE = 5;
+export const MAX_SUPPLEMENTARY_EVIDENCE = 4;
 
 export const countAcceptedEvidence = (items: EvidenceItem[]) =>
   items.filter(item => item.status === 'accepted').length;
+
+export const countAcceptedSupplementaryEvidence = (items: EvidenceItem[]) =>
+  items.filter(item => item.role === 'supplementary' && item.status === 'accepted').length;
+
+export const canSubmitEvidenceReport = (
+  items: EvidenceItem[],
+  uploadSessionId: string | null,
+  incidentType: IncidentType | null
+) => {
+  const primaryItems = items.filter(item => item.role === 'primary' && item.status === 'accepted');
+  const supplementaryItems = items.filter(item => item.role === 'supplementary' && item.status === 'accepted');
+  const primary = primaryItems[0];
+
+  return Boolean(
+    uploadSessionId
+    && incidentType
+    && primaryItems.length === 1
+    && countAcceptedEvidence(items) <= MAX_ACCEPTED_EVIDENCE
+    && supplementaryItems.length <= MAX_SUPPLEMENTARY_EVIDENCE
+    && items.every(item => item.status !== 'uploading' && item.status !== 'error')
+    && primary?.classification?.accepted === true
+    && (primary.classification.label === 'fire' || primary.classification.label === 'road')
+    && primary.classification.status === 'valid'
+    && primary.classification.action === 'accept'
+    && primary.classification.label === incidentType
+    && isValidCaptureLocation(primary.captureLocation)
+    && supplementaryItems.every(item =>
+      isValidCaptureLocation(item.captureLocation) && item.classification == null
+    )
+  );
+};
 
 export const acquireSubmissionLock = (lock: { current: boolean }) => {
   if (lock.current) return false;

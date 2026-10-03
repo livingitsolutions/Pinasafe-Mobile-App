@@ -81,10 +81,11 @@ describe('capture-location migration contract', () => {
     expect(bindingMigration).toMatch(/v_updated_count <> v_accepted_count[\s\S]*RAISE EXCEPTION/i);
   });
 
-  test('uses the first accepted capture for canonical report coordinates without later finalization overwrites', () => {
-    expect(evidenceFlow).toMatch(/items\.find\(item => item\.status === 'accepted'\)\?\.captureLocation/);
+  test('uses the first accepted primary capture for canonical report coordinates without later finalization overwrites', () => {
+    expect(evidenceFlow).toMatch(/items\.find\(item => item\.role === 'primary' && item\.status === 'accepted'\)/);
     expect(reportScreen).toMatch(/getFirstAcceptedCaptureLocation\(evidence\)/);
-    expect(reportScreen).toMatch(/coordinates: \{ latitude: captureLocation\.latitude, longitude: captureLocation\.longitude \}/);
+    expect(reportScreen).toMatch(/getFirstAcceptedPrimaryEvidence\(evidence\)/);
+    expect(reportScreen).toMatch(/coordinates: \{ latitude: primaryLocation\.latitude, longitude: primaryLocation\.longitude \}/);
     expect(bindingMigration).toMatch(/INSERT INTO public\.emergency_reports[\s\S]*latitude,[\s\S]*longitude,[\s\S]*p_latitude,[\s\S]*p_longitude/i);
     expect(bindingMigration).not.toMatch(/UPDATE public\.emergency_reports[\s\S]*latitude\s*=|UPDATE public\.emergency_reports[\s\S]*longitude\s*=/i);
     expect(finalizeBody).not.toMatch(/UPDATE public\.emergency_reports/i);

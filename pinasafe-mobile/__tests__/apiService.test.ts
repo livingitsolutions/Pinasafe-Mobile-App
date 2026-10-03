@@ -495,6 +495,22 @@ describe('apiService (F2 foundation)', () => {
     expect(sessionExpired).not.toHaveBeenCalled();
   });
 
+  test('REGRESSION: evidence upload network failure preserves the authenticated session for retry', async () => {
+    apiService.setToken('valid-token');
+    await AsyncStorage.setItem('auth_token', 'valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    const sessionExpired = jest.fn();
+    apiService.onSessionExpired(sessionExpired);
+    (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('network unavailable'));
+
+    await expect(apiService.uploadEvidenceImage('session-id', { uri: 'file:///photo.jpg' }, captureLocation))
+      .rejects.toThrow(/network error/i);
+
+    expect(apiService.getToken()).toBe('valid-token');
+    expect(await AsyncStorage.getItem('auth_token')).toBe('valid-token');
+    expect(sessionExpired).not.toHaveBeenCalled();
+  });
+
   test.each([400, 403, 409, 500, 503])('evidence upload %s retains the authenticated session', async status => {
     apiService.setToken('valid-token');
     await AsyncStorage.setItem('auth_token', 'valid-token');
@@ -535,6 +551,22 @@ describe('apiService (F2 foundation)', () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, { data: {} }));
     await apiService.uploadEvidenceImage('session-id', { uri: 'photo' }, captureLocation);
     const [, request] = (global.fetch as jest.Mock).mock.calls[0];
-    expect([...request.body.keys()]).toEqual(['image', 'captureLatitude', 'captureLongitude', 'capturedAt']);
+    expect([...request.body.keys()]).toEqual(['image', 'captureLatitude', 'captureLongitude', 'capturedAt', 'evidenceRole']);
+    expect(request.body.get('evidenceRole')).toBe('primary');
+  });
+
+  test('supplementary upload sends its explicit role with its own capture metadata', async () => {
+    apiService.setToken('valid-token');
+    (Platform as { OS: string }).OS = 'ios';
+    (global.fetch as jest.Mock).mockResolvedValueOnce(jsonResponse(201, {
+      data: { accepted: true, evidenceId: 'supp-1', evidenceRole: 'supplementary' }
+    }));
+
+    await apiService.uploadEvidenceImage('session-id', { uri: 'photo' }, captureLocation, 'supplementary');
+
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(request.body.get('evidenceRole')).toBe('supplementary');
+    expect(request.body.get('captureLatitude')).toBe(String(captureLocation.latitude));
+    expect(request.body.get('capturedAt')).toBe(captureLocation.capturedAt);
   });
 });

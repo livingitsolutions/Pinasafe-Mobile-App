@@ -1,24 +1,38 @@
 import React, { useRef, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { Check, MapPin, RotateCcw, Send, Camera, AlertTriangle, Crosshair } from 'lucide-react-native';
+import { Check, MapPin, Send, Camera, Crosshair } from 'lucide-react-native';
 import CameraCapture from '@/components/CameraCapture';
 import { Banner, Button, Card, Field, Input, PageHeader, Screen, Section, TextArea, TypeBadge } from '@/components/ui';
 import { apiService, isApiError } from '@/services/apiService';
 import {
   acquireSubmissionLock,
+  acceptedClassificationTransition,
+  buildPrimaryClassificationRetry,
   buildDurableReportPayload,
+  canSubmitEvidenceReport,
+  classificationFailureTransition,
+  discardFailedCapture,
   countAcceptedEvidence,
+  countAcceptedSupplementaryEvidence,
+  EvidenceFlowStage,
   EvidenceItem,
+  EvidenceRole,
+  getClassificationRecoveryContent,
+  getFirstAcceptedPrimaryEvidence,
   IncidentType,
   MAX_ACCEPTED_EVIDENCE,
+  MAX_SUPPLEMENTARY_EVIDENCE,
   CaptureLocation,
   getFirstAcceptedCaptureLocation,
   isValidCaptureLocation,
+  parseEvidenceUploadDecision,
+  retakeCaptureTransition,
+  retryClassificationTransition,
 } from '@/utils/evidenceFlow';
 import { colors, radius, space, type as typography } from '@/theme/tokens';
 
-type Stage = 'capture' | 'verify' | 'review' | 'success';
+type Stage = EvidenceFlowStage;
 
 export default function ReportEmergency() {
   const [stage, setStage] = useState<Stage>('capture');
@@ -32,11 +46,17 @@ export default function ReportEmergency() {
   const [error, setError] = useState('');
   const [reportId, setReportId] = useState('');
   const [showCamera, setShowCamera] = useState(false);
+  const [captureRole, setCaptureRole] = useState<EvidenceRole>('primary');
+  const [classificationUnavailable, setClassificationUnavailable] = useState(false);
+  const [classificationRetryAvailable, setClassificationRetryAvailable] = useState(false);
+  const [failedCaptureId, setFailedCaptureId] = useState<string | null>(null);
   const [locationStatus, setLocationStatus] = useState<'idle' | 'fetching' | 'denied' | 'ready'>('idle');
   const lock = useRef(false);
   const accepted = countAcceptedEvidence(evidence);
   const captureLocation = getFirstAcceptedCaptureLocation(evidence);
   const uploading = evidence.some(item => item.status === 'uploading');
+  const supplementaryCount = countAcceptedSupplementaryEvidence(evidence);
+  const recoveryContent = getClassificationRecoveryContent(classificationUnavailable, classificationRetryAvailable);
 
   const ensureSession = async () => {
     if (sessionId) return sessionId;
@@ -47,16 +67,94 @@ export default function ReportEmergency() {
     return id;
   };
 
-  const openCamera = () => {
-    if (busy || uploading || accepted >= MAX_ACCEPTED_EVIDENCE) return;
+  const openCamera = (role: EvidenceRole = 'primary') => {
+    if (
+      busy || uploading || accepted >= MAX_ACCEPTED_EVIDENCE
+      || (role === 'supplementary' && supplementaryCount >= MAX_SUPPLEMENTARY_EVIDENCE)
+    ) return;
     setError('');
+    setCaptureRole(role);
     setShowCamera(true);
+  };
+
+  const retakeFailedCapture = () => {
+    if (!failedCaptureId) return;
+    const failed = evidence.find(item => item.localId === failedCaptureId);
+    if (!failed) return;
+    setEvidence(items => discardFailedCapture(items, failedCaptureId));
+    setFailedCaptureId(null);
+    const transition = retakeCaptureTransition(failed.role);
+    setStage(transition.stage);
+    setCaptureRole(failed.role);
+    setShowCamera(transition.showCamera);
+    setClassificationUnavailable(transition.classificationUnavailable);
+    setClassificationRetryAvailable(false);
+    setError('');
+  };
+
+  const retryClassification = async () => {
+    const failed = evidence.find(item => item.localId === failedCaptureId);
+    const retry = buildPrimaryClassificationRetry(failed || null, sessionId);
+    if (!retry || busy) return;
+
+    const transition = retryClassificationTransition();
+    setStage(transition.stage);
+    setShowCamera(transition.showCamera);
+    setClassificationUnavailable(transition.classificationUnavailable);
+    setClassificationRetryAvailable(false);
+    setError('');
+    setBusy(true);
+
+    try {
+      const response = await apiService.uploadEvidenceImage(
+        retry.uploadSessionId,
+        retry.image,
+        retry.captureLocation,
+        retry.evidenceRole
+      );
+      const decision = parseEvidenceUploadDecision(response.data?.data);
+      if (decision.kind === 'unavailable') {
+        throw Object.assign(new Error('Evidence response was unusable.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
+      }
+
+      if (decision.kind === 'accepted-primary') {
+        setEvidence(items => items.map(item => item.localId === retry.localId
+          ? { ...item, status: 'accepted', classification: { accepted: true, ...decision.classification }, reason: undefined }
+          : item));
+        setIncidentType(current => current ?? decision.classification.label as IncidentType);
+        if (accepted === 0 && retry.captureLocation.address) setLocation(retry.captureLocation.address);
+        setFailedCaptureId(null);
+        setStage(acceptedClassificationTransition().stage);
+      } else if (decision.kind === 'rejected-primary') {
+        setEvidence(items => items.map(item => item.localId === retry.localId
+          ? { ...item, status: 'rejected', classification: decision.classification, reason: decision.classification.reason || decision.classification.caption || 'The image does not clearly show a supported incident.' }
+          : item));
+        setFailedCaptureId(retry.localId);
+        setClassificationUnavailable(false);
+        setClassificationRetryAvailable(false);
+      } else {
+        throw Object.assign(new Error('Unexpected evidence role in classifier response.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
+      }
+    } catch (cause) {
+      const classifierUnavailable = (isApiError(cause)
+        && cause.status === 503
+        && cause.message === 'Classification service unavailable');
+      setFailedCaptureId(retry.localId);
+      setClassificationUnavailable(classifierUnavailable);
+      setClassificationRetryAvailable(classifierUnavailable);
+      if (!classifierUnavailable) setError('Classification retry failed. Retake the photo before continuing.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleCapture = async (uri: string, captureLoc: CaptureLocation) => {
     setShowCamera(false);
     setBusy(true);
     setError('');
+    setClassificationUnavailable(false);
+    setClassificationRetryAvailable(false);
+    setFailedCaptureId(null);
 
     if (!isValidCaptureLocation(captureLoc)) {
       setLocationStatus('denied');
@@ -67,59 +165,85 @@ export default function ReportEmergency() {
     setLocationStatus('ready');
 
     const localId = `${Date.now()}-${Math.random()}`;
-    setEvidence(items => [...items, { localId, uri, status: 'uploading', captureLocation: captureLoc }]);
+    setEvidence(items => [...items, { localId, uri, role: captureRole, status: 'uploading', captureLocation: captureLoc }]);
 
     try {
       const sid = await ensureSession();
-      const response = await apiService.uploadEvidenceImage(sid, { uri }, captureLoc);
-      const result = response.data?.data;
-      if (!result) throw new Error('The server returned no classification result.');
+      const response = await apiService.uploadEvidenceImage(sid, { uri }, captureLoc, captureRole);
+      const decision = parseEvidenceUploadDecision(response.data?.data);
+      if (decision.kind === 'unavailable') {
+        throw Object.assign(new Error('The evidence response was unusable.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
+      }
 
-      if (result.accepted && 'classification' in result) {
-        const label = result.classification.label as IncidentType;
+      if (decision.kind === 'accepted-supplementary' && captureRole === 'supplementary') {
+        setEvidence(items => items.map(item => item.localId === localId
+          ? { ...item, status: 'accepted', reason: undefined }
+          : item));
+        setStage('supplementary');
+      } else if (decision.kind === 'accepted-primary' && captureRole === 'primary') {
+        const label = decision.classification.label as IncidentType;
         setIncidentType(current => current ?? label);
         if (accepted === 0 && captureLoc.address) setLocation(captureLoc.address);
         setEvidence(items => items.map(item => item.localId === localId
-          ? { ...item, status: 'accepted', classification: result.classification }
+          ? { ...item, status: 'accepted', classification: { accepted: true, ...decision.classification }, reason: undefined }
           : item));
-        setStage('verify');
-      } else {
-        const classification = result as any;
+        setStage(acceptedClassificationTransition().stage);
+      } else if (decision.kind === 'rejected-primary') {
+        if (captureRole !== 'primary') {
+          throw Object.assign(new Error('Unexpected supplementary classification response.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
+        }
+        const classification = decision.classification;
         setEvidence(items => items.map(item => item.localId === localId
           ? { ...item, status: 'rejected', classification, reason: classification.reason || classification.caption || 'The image does not clearly show a supported incident.' }
           : item));
+        setFailedCaptureId(localId);
+        setStage('capture');
+      } else {
+        throw Object.assign(new Error('Unexpected evidence response.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
       }
     } catch (cause) {
+      const classifierUnavailable = isApiError(cause)
+        && cause.status === 503
+        && cause.message === 'Classification service unavailable';
+      const transition = captureRole === 'primary'
+        ? classificationFailureTransition()
+        : { stage: 'supplementary' as const, showCamera: false, classificationUnavailable: false };
       setEvidence(items => items.map(item => item.localId === localId
-        ? { ...item, status: 'error', reason: cause instanceof Error ? cause.message : 'Upload failed.' }
+        ? { ...item, status: 'error', reason: 'This photo was not accepted.' }
         : item));
+      setFailedCaptureId(localId);
+      setStage(transition.stage);
+      setShowCamera(transition.showCamera);
+      setClassificationUnavailable(captureRole === 'primary' && classifierUnavailable);
+      setClassificationRetryAvailable(captureRole === 'primary' && classifierUnavailable);
+      if (!classifierUnavailable) setError('This photo could not be uploaded. Retake it before continuing.');
     } finally {
       setBusy(false);
     }
   };
 
-  const retake = () => {
-    setEvidence([]);
-    setSessionId(null);
-    setIncidentType(null);
-    setLocationStatus('idle');
-    setStage('capture');
-  };
-
   const submit = async () => {
-    if (!sessionId || !incidentType || !isValidCaptureLocation(captureLocation)
+    const primary = getFirstAcceptedPrimaryEvidence(evidence);
+    if (!canSubmitEvidenceReport(evidence, sessionId, incidentType)
+      || !primary
+      || !isValidCaptureLocation(primary.captureLocation)
+      || !incidentType
+      || !sessionId
       || !acquireSubmissionLock(lock)) return;
+    const primaryLocation = primary.captureLocation;
+    const submittedType = incidentType;
+    const submittedSessionId = sessionId;
     setBusy(true);
     setError('');
     try {
       const response = await apiService.createEmergencyReport(
         buildDurableReportPayload({
-          type: incidentType,
+          type: submittedType,
           description,
-          location: location.trim() || captureLocation.address || `${captureLocation.latitude.toFixed(4)}, ${captureLocation.longitude.toFixed(4)}`,
+          location: location.trim() || primaryLocation.address || `${primaryLocation.latitude.toFixed(4)}, ${primaryLocation.longitude.toFixed(4)}`,
           contactNumber,
-          coordinates: { latitude: captureLocation.latitude, longitude: captureLocation.longitude },
-          uploadSessionId: sessionId,
+          coordinates: { latitude: primaryLocation.latitude, longitude: primaryLocation.longitude },
+          uploadSessionId: submittedSessionId,
         })
       );
       const id = response.data?.data?.id;
@@ -156,7 +280,10 @@ export default function ReportEmergency() {
   if (stage === 'capture') {
     return (
       <Screen>
-        <PageHeader eyebrow="Step 1 of 3" title="Capture evidence" description="Take a clear photo of the incident. The server will verify and classify it automatically." />
+        <PageHeader eyebrow="Step 1 of 5" title="Capture primary evidence" description="Take one live-camera photo. The server will verify and classify it automatically." />
+        {recoveryContent ? (
+          <Banner title={recoveryContent.title} message={recoveryContent.message} tone="error" />
+        ) : null}
         {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
         {locationStatus === 'denied' ? (
           <Banner title="Location required" message="PinaSafe needs your location to report an incident. Grant location permission in your device settings and try again." tone="warning" />
@@ -169,10 +296,10 @@ export default function ReportEmergency() {
                   <Image accessibilityLabel="Captured incident evidence" source={{ uri: item.uri }} style={styles.image} />
                   <View style={styles.evidenceCopy}>
                     <Text style={styles.evidenceStatus}>
-                      {item.status === 'uploading' ? 'Server classification in progress'
+                      {item.status === 'uploading' ? (item.role === 'primary' ? 'AI classification in progress' : 'Saving supplementary evidence')
                         : item.status === 'accepted' ? `Accepted as ${item.classification?.label}`
-                        : item.status === 'rejected' ? 'Image rejected'
-                        : 'Upload failed'}
+                        : item.status === 'rejected' ? 'Primary image rejected'
+                        : 'Photo not accepted'}
                     </Text>
                     {item.reason ? <Text style={styles.errorText}>{item.reason}</Text> : null}
                     {item.captureLocation ? (
@@ -183,10 +310,21 @@ export default function ReportEmergency() {
               ))}
             </View>
           ) : null}
-          <Button label={accepted > 0 ? 'Capture another image' : 'Open live camera'} onPress={openCamera} disabled={accepted >= MAX_ACCEPTED_EVIDENCE} loading={busy} icon={<Camera size={19} color={colors.white} />} />
+          {recoveryContent ? (
+            <View style={styles.actions}>
+              {recoveryContent.retryLabel ? (
+                <Button variant="secondary" label={recoveryContent.retryLabel} onPress={retryClassification} disabled={busy} loading={busy} />
+              ) : null}
+              <Button label="Retake Photo" onPress={retakeFailedCapture} disabled={busy} icon={<Camera size={19} color={colors.white} />} />
+            </View>
+          ) : failedCaptureId ? (
+            <Button label="Retake Photo" onPress={retakeFailedCapture} disabled={busy} loading={busy} icon={<Camera size={19} color={colors.white} />} />
+          ) : (
+            <Button label="Capture Primary Evidence" onPress={() => openCamera('primary')} disabled={accepted >= MAX_ACCEPTED_EVIDENCE} loading={busy} icon={<Camera size={19} color={colors.white} />} />
+          )}
           <Text style={styles.counter}>{accepted} of {MAX_ACCEPTED_EVIDENCE} accepted</Text>
           {accepted > 0 ? (
-            <Button label="Continue to verification" onPress={() => setStage('verify')} icon={<Check size={18} color={colors.white} />} />
+            <Button label="Continue to classification result" onPress={() => setStage('verify')} icon={<Check size={18} color={colors.white} />} />
           ) : null}
         </Section>
       </Screen>
@@ -196,17 +334,18 @@ export default function ReportEmergency() {
   if (stage === 'verify') {
     return (
       <Screen>
-        <PageHeader eyebrow="Step 2 of 3" title="Verify classification" description="Review the AI-detected incident type and capture location. You can retake the evidence if needed." />
+        <PageHeader eyebrow="Step 3 of 5" title="Classification result" description="Review the authoritative incident type and primary capture location." />
         {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
         <Section title="AI classification result">
           <Card tone="critical">
             <View style={styles.verifyHead}>
               {incidentType ? <TypeBadge value={incidentType} /> : null}
               <Text style={styles.verifyType}>
-                {incidentType === 'fire' ? 'Fire incident detected' : incidentType === 'road' ? 'Road incident detected' : 'No classification'}
+                {incidentType === 'fire' ? 'Fire Incident Detected' : incidentType === 'road' ? 'Road Incident Detected' : 'No classification'}
               </Text>
             </View>
-            {evidence.filter(e => e.status === 'accepted').map(item => (
+            <Text style={styles.evidenceStatus}>Primary evidence accepted.</Text>
+            {evidence.filter(e => e.role === 'primary' && e.status === 'accepted').map(item => (
               <View key={item.localId} style={styles.verifyEvidence}>
                 <Image accessibilityLabel="Accepted evidence" source={{ uri: item.uri }} style={styles.image} />
                 <View style={styles.evidenceCopy}>
@@ -236,8 +375,39 @@ export default function ReportEmergency() {
           </Card>
         </Section>
         <View style={styles.actions}>
-          <Button variant="secondary" label="Retake evidence" onPress={retake} icon={<RotateCcw size={17} color={colors.ink} />} />
-          <Button label="Continue to review" onPress={() => setStage('review')} icon={<Check size={18} color={colors.white} />} />
+          <Button variant="secondary" label="Add Evidence" onPress={() => setStage('supplementary')} disabled={accepted >= MAX_ACCEPTED_EVIDENCE} icon={<Camera size={18} color={colors.ink} />} />
+          <Button label="Continue" onPress={() => setStage('review')} icon={<Check size={18} color={colors.white} />} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (stage === 'supplementary') {
+    return (
+      <Screen>
+        <PageHeader eyebrow="Step 4 of 5" title="Optional additional evidence" description="Additional evidence is optional. Add up to 4 more photos to help responders understand the incident." />
+        {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
+        <Section title="Supplementary evidence">
+          {evidence.filter(item => item.role === 'supplementary').map(item => (
+            <Card key={item.localId} style={styles.evidence}>
+              <Image accessibilityLabel="Supplementary incident evidence" source={{ uri: item.uri }} style={styles.image} />
+              <View style={styles.evidenceCopy}>
+                <Text style={styles.evidenceStatus}>{item.status === 'accepted' ? 'Supplementary evidence accepted' : item.status === 'uploading' ? 'Saving supplementary evidence' : 'Photo not accepted'}</Text>
+                {item.reason ? <Text style={styles.errorText}>{item.reason}</Text> : null}
+                <Text style={styles.captureLoc}>Captured at {item.captureLocation.latitude.toFixed(4)}, {item.captureLocation.longitude.toFixed(4)}</Text>
+              </View>
+            </Card>
+          ))}
+          {failedCaptureId ? (
+            <Button variant="secondary" label="Retake Photo" onPress={retakeFailedCapture} disabled={busy} loading={busy} icon={<Camera size={18} color={colors.ink} />} />
+          ) : (
+            <Button label="Add Evidence" onPress={() => openCamera('supplementary')} disabled={busy || uploading || accepted >= MAX_ACCEPTED_EVIDENCE || supplementaryCount >= MAX_SUPPLEMENTARY_EVIDENCE} loading={busy} icon={<Camera size={18} color={colors.white} />} />
+          )}
+          <Text style={styles.counter}>{accepted} / {MAX_ACCEPTED_EVIDENCE}</Text>
+        </Section>
+        <View style={styles.actions}>
+          <Button variant="secondary" label="Back" onPress={() => setStage('verify')} />
+          <Button label="Continue" onPress={() => setStage('review')} disabled={uploading || Boolean(failedCaptureId)} icon={<Check size={18} color={colors.white} />} />
         </View>
       </Screen>
     );
@@ -246,7 +416,7 @@ export default function ReportEmergency() {
   // stage === 'review'
   return (
     <Screen>
-      <PageHeader eyebrow="Step 3 of 3" title="Review and submit" description="Add an optional description, then submit your emergency report." />
+      <PageHeader eyebrow="Step 5 of 5" title="Review and submit" description="Add an optional description, then submit your emergency report." />
       {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
       <Section title="Incident summary">
         <Card tone="critical">
@@ -260,8 +430,18 @@ export default function ReportEmergency() {
               <Text style={styles.reviewCoords}>{captureLocation.latitude.toFixed(4)}, {captureLocation.longitude.toFixed(4)}</Text>
             </View>
           ) : null}
-          <Text style={styles.counter}>{accepted} accepted live-camera {accepted === 1 ? 'image' : 'images'}</Text>
+          <Text style={styles.counter}>{accepted} / {MAX_ACCEPTED_EVIDENCE} accepted evidence items</Text>
         </Card>
+        {evidence.filter(item => item.role === 'supplementary' && item.status === 'accepted').map(item => (
+          <Card key={item.localId} style={styles.evidence}>
+            <Image accessibilityLabel="Supplementary incident evidence" source={{ uri: item.uri }} style={styles.image} />
+            <View style={styles.evidenceCopy}>
+              <Text style={styles.evidenceStatus}>Supplementary evidence</Text>
+              <Text style={styles.captureLoc}>Captured at {item.captureLocation.latitude.toFixed(4)}, {item.captureLocation.longitude.toFixed(4)}</Text>
+              <Text style={styles.timestampText}>Captured at {new Date(item.captureLocation.capturedAt).toLocaleString()}</Text>
+            </View>
+          </Card>
+        ))}
       </Section>
       <Section title="Additional context" description="Optional. Describe hazards, people involved, and what responders should know.">
         <Field label="Incident description" hint={`${description.trim().length}/1000 characters`}>
@@ -274,7 +454,7 @@ export default function ReportEmergency() {
       <Banner title="Ready to submit" message="PinaSafe routes the report according to backend organization policy. No response ETA is promised." tone="info" />
       <View style={styles.actions}>
         <Button variant="secondary" label="Back" onPress={() => setStage('verify')} />
-        <Button label="Submit emergency report" onPress={submit} loading={busy} disabled={!incidentType || !captureLocation} icon={<Send size={18} color={colors.white} />} />
+        <Button label="Submit emergency report" onPress={submit} loading={busy} disabled={!canSubmitEvidenceReport(evidence, sessionId, incidentType)} icon={<Send size={18} color={colors.white} />} />
       </View>
     </Screen>
   );

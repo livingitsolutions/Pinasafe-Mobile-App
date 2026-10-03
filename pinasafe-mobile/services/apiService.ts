@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isClientRuntime } from '@/utils/clientRuntime';
 import { Platform } from 'react-native';
-import { CaptureLocation, isValidCaptureLocation } from '@/utils/evidenceFlow';
+import { CaptureLocation, EvidenceRole, isValidCaptureLocation } from '@/utils/evidenceFlow';
 
 interface APIResponse<T = unknown> {
   data?: T;
@@ -68,7 +68,7 @@ export interface EmergencyReportData {
 }
 
 export interface EvidenceClassification {
-  accepted: boolean;
+  accepted?: boolean;
   label: 'fire' | 'road' | 'other';
   confidence: number | null;
   status: 'valid' | 'invalid';
@@ -85,16 +85,24 @@ export interface EvidenceUploadSession {
 
 export type EvidenceUploadResult =
   | EvidenceClassification
-  | { accepted: true; evidenceId: string; classification: EvidenceClassification };
+  | { accepted: false; evidenceRole: 'primary'; classification: EvidenceClassification }
+  | {
+      accepted: true;
+      evidenceId: string;
+      evidenceRole: 'primary';
+      classification: EvidenceClassification;
+    }
+  | { accepted: true; evidenceId: string; evidenceRole: 'supplementary' };
 
 export interface PrivateEvidenceItem {
   id: string;
+  evidenceRole?: EvidenceRole | null;
   url: string;
   mimeType: 'image/jpeg';
   byteSize: number;
   width: number;
   height: number;
-  classification: { label: 'fire' | 'road'; confidence: number | null; caption: string | null };
+  classification: { label: 'fire' | 'road'; confidence: number | null; caption: string | null } | null;
   createdAt: string;
   expiresIn: number;
   captureLocation?: CaptureLocation | null;
@@ -311,7 +319,8 @@ class APIService {
   async uploadEvidenceImage(
     sessionId: string,
     image: { uri: string; name?: string; type?: string },
-    captureLocation: CaptureLocation
+    captureLocation: CaptureLocation,
+    evidenceRole: EvidenceRole = 'primary'
   ): Promise<APIResponse<{ data: EvidenceUploadResult }>> {
     if (!isValidCaptureLocation(captureLocation)) {
       throw new Error('Valid capture location is required before uploading evidence.');
@@ -351,6 +360,7 @@ class APIService {
       formData.append('captureAccuracy', String(captureLocation.accuracy));
     }
     formData.append('capturedAt', captureLocation.capturedAt);
+    formData.append('evidenceRole', evidenceRole);
 
     return this.request(`/evidence/sessions/${sessionId}/image`, {
       method: 'POST',
