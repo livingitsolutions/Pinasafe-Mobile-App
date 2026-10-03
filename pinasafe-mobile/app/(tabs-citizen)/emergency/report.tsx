@@ -46,12 +46,16 @@ export default function ReportEmergency() {
   const [error, setError] = useState('');
   const [reportId, setReportId] = useState('');
   const [showCamera, setShowCamera] = useState(false);
-  const [captureRole, setCaptureRole] = useState<EvidenceRole>('primary');
   const [classificationUnavailable, setClassificationUnavailable] = useState(false);
   const [classificationRetryAvailable, setClassificationRetryAvailable] = useState(false);
   const [failedCaptureId, setFailedCaptureId] = useState<string | null>(null);
   const [locationStatus, setLocationStatus] = useState<'idle' | 'fetching' | 'denied' | 'ready'>('idle');
   const lock = useRef(false);
+  // Authoritative per-shutter role. Written synchronously before the camera
+  // opens; read exactly once at shutter time into a local constant so the
+  // upload/failure/stage path can never observe a stale role closure.
+  const captureRoleRef = useRef<EvidenceRole>('primary');
+  const [cameraNonce, setCameraNonce] = useState(0);
   const accepted = countAcceptedEvidence(evidence);
   const captureLocation = getFirstAcceptedCaptureLocation(evidence);
   const uploading = evidence.some(item => item.status === 'uploading');
@@ -72,8 +76,11 @@ export default function ReportEmergency() {
       busy || uploading || accepted >= MAX_ACCEPTED_EVIDENCE
       || (role === 'supplementary' && supplementaryCount >= MAX_SUPPLEMENTARY_EVIDENCE)
     ) return;
+    // Synchronously record the authoritative role before the camera mounts so
+    // the shutter closure reads the intended role regardless of state timing.
+    captureRoleRef.current = role;
     setError('');
-    setCaptureRole(role);
+    setCameraNonce(n => n + 1);
     setShowCamera(true);
   };
 
@@ -84,8 +91,11 @@ export default function ReportEmergency() {
     setEvidence(items => discardFailedCapture(items, failedCaptureId));
     setFailedCaptureId(null);
     const transition = retakeCaptureTransition(failed.role);
+    // Preserve the failed capture's own role synchronously; a failed
+    // supplementary retake must reopen the camera as supplementary, not primary.
+    captureRoleRef.current = failed.role;
     setStage(transition.stage);
-    setCaptureRole(failed.role);
+    setCameraNonce(n => n + 1);
     setShowCamera(transition.showCamera);
     setClassificationUnavailable(transition.classificationUnavailable);
     setClassificationRetryAvailable(false);
@@ -156,6 +166,10 @@ export default function ReportEmergency() {
     setClassificationRetryAvailable(false);
     setFailedCaptureId(null);
 
+    // Resolve the intended role exactly once from the authoritative ref so this
+    // whole shutter→upload→failure operation is immutable with respect to role.
+    const resolvedRole = captureRoleRef.current;
+
     if (!isValidCaptureLocation(captureLoc)) {
       setLocationStatus('denied');
       setError('Location is required to capture evidence. Grant location permission and try again.');
@@ -165,22 +179,22 @@ export default function ReportEmergency() {
     setLocationStatus('ready');
 
     const localId = `${Date.now()}-${Math.random()}`;
-    setEvidence(items => [...items, { localId, uri, role: captureRole, status: 'uploading', captureLocation: captureLoc }]);
+    setEvidence(items => [...items, { localId, uri, role: resolvedRole, status: 'uploading', captureLocation: captureLoc }]);
 
     try {
       const sid = await ensureSession();
-      const response = await apiService.uploadEvidenceImage(sid, { uri }, captureLoc, captureRole);
+      const response = await apiService.uploadEvidenceImage(sid, { uri }, captureLoc, resolvedRole);
       const decision = parseEvidenceUploadDecision(response.data?.data);
       if (decision.kind === 'unavailable') {
         throw Object.assign(new Error('The evidence response was unusable.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
       }
 
-      if (decision.kind === 'accepted-supplementary' && captureRole === 'supplementary') {
+      if (decision.kind === 'accepted-supplementary' && resolvedRole === 'supplementary') {
         setEvidence(items => items.map(item => item.localId === localId
           ? { ...item, status: 'accepted', reason: undefined }
           : item));
         setStage('supplementary');
-      } else if (decision.kind === 'accepted-primary' && captureRole === 'primary') {
+      } else if (decision.kind === 'accepted-primary' && resolvedRole === 'primary') {
         const label = decision.classification.label as IncidentType;
         setIncidentType(current => current ?? label);
         if (accepted === 0 && captureLoc.address) setLocation(captureLoc.address);
@@ -189,7 +203,7 @@ export default function ReportEmergency() {
           : item));
         setStage(acceptedClassificationTransition().stage);
       } else if (decision.kind === 'rejected-primary') {
-        if (captureRole !== 'primary') {
+        if (resolvedRole !== 'primary') {
           throw Object.assign(new Error('Unexpected supplementary classification response.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
         }
         const classification = decision.classification;
@@ -205,7 +219,7 @@ export default function ReportEmergency() {
       const classifierUnavailable = isApiError(cause)
         && cause.status === 503
         && cause.message === 'Classification service unavailable';
-      const transition = captureRole === 'primary'
+      const transition = resolvedRole === 'primary'
         ? classificationFailureTransition()
         : { stage: 'supplementary' as const, showCamera: false, classificationUnavailable: false };
       setEvidence(items => items.map(item => item.localId === localId
@@ -214,8 +228,8 @@ export default function ReportEmergency() {
       setFailedCaptureId(localId);
       setStage(transition.stage);
       setShowCamera(transition.showCamera);
-      setClassificationUnavailable(captureRole === 'primary' && classifierUnavailable);
-      setClassificationRetryAvailable(captureRole === 'primary' && classifierUnavailable);
+      setClassificationUnavailable(resolvedRole === 'primary' && classifierUnavailable);
+      setClassificationRetryAvailable(resolvedRole === 'primary' && classifierUnavailable);
       if (!classifierUnavailable) setError('This photo could not be uploaded. Retake it before continuing.');
     } finally {
       setBusy(false);
@@ -259,7 +273,9 @@ export default function ReportEmergency() {
   };
 
   if (showCamera) {
-    return <CameraCapture onCapture={handleCapture} onCancel={() => setShowCamera(false)} />;
+    // Key by role + nonce so each camera open is a clean lifecycle; the
+    // authoritative role ref (not this remount) is the correctness mechanism.
+    return <CameraCapture key={`${captureRoleRef.current}-${cameraNonce}`} onCapture={handleCapture} onCancel={() => setShowCamera(false)} />;
   }
 
   if (stage === 'success') {

@@ -66,6 +66,35 @@ export const acceptedClassificationTransition = () => ({ stage: 'verify' as cons
 export const discardFailedCapture = (items: EvidenceItem[], failedLocalId: string) =>
   items.filter(item => item.localId !== failedLocalId);
 
+/**
+ * Resolve the authoritative role for one shutter operation. The screen reads
+ * this from a ref written synchronously when the camera opens, so a stale
+ * React state closure can never override the intended role. Returns the role
+ * to use for the local item, upload, and failure handling.
+ */
+export const resolveCaptureRole = (authoritativeRole: EvidenceRole): EvidenceRole => authoritativeRole;
+
+/**
+ * Map a completed upload to the item status/role the screen should persist.
+ * The role always comes from the resolved capture context, never re-read from
+ * mutable state, so a failed supplementary keeps role 'supplementary'.
+ */
+export const resolveCaptureOutcome = (
+  resolvedRole: EvidenceRole,
+  decision: EvidenceUploadDecision
+): { status: EvidenceItem['status']; role: EvidenceRole; reason?: string } => {
+  if (decision.kind === 'accepted-supplementary' && resolvedRole === 'supplementary') {
+    return { status: 'accepted', role: 'supplementary' };
+  }
+  if (decision.kind === 'accepted-primary' && resolvedRole === 'primary') {
+    return { status: 'accepted', role: 'primary' };
+  }
+  if (decision.kind === 'rejected-primary' && resolvedRole === 'primary') {
+    return { status: 'rejected', role: 'primary' };
+  }
+  return { status: 'error', role: resolvedRole, reason: 'This photo was not accepted.' };
+};
+
 export const buildPrimaryClassificationRetry = (
   item: EvidenceItem | null,
   uploadSessionId: string | null

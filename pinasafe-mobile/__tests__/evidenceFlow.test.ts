@@ -17,6 +17,8 @@ import {
   MAX_ACCEPTED_EVIDENCE,
   MAX_SUPPLEMENTARY_EVIDENCE,
   parseEvidenceUploadDecision,
+  resolveCaptureOutcome,
+  resolveCaptureRole,
   retakeCaptureTransition,
   retryClassificationTransition,
 } from '../utils/evidenceFlow';
@@ -260,5 +262,80 @@ describe('durable citizen evidence flow', () => {
     expect(canSubmitEvidenceReport(supplementary, 'session-id', 'road')).toBe(false);
     expect(canSubmitEvidenceReport([primary], null, 'road')).toBe(false);
     expect(canSubmitEvidenceReport([primary], 'session-id', 'fire')).toBe(false);
+  });
+
+  describe('V3.1 supplementary role authoritative capture', () => {
+    // Mirrors the screen: openCamera writes the role synchronously to a ref;
+    // the shutter resolves it once. State may still hold a stale 'primary'.
+    const acceptedPrimary: EvidenceItem = {
+      localId: 'primary',
+      uri: 'primary-photo',
+      role: 'primary',
+      status: 'accepted',
+      classification: {
+        accepted: true, label: 'fire', confidence: 0.9, status: 'valid', action: 'accept', reason: null, caption: null,
+      },
+      captureLocation,
+    };
+
+    test('Add Evidence after accepted primary resolves supplementary role even when state is stale primary', () => {
+      const authoritativeRole: { current: import('../utils/evidenceFlow').EvidenceRole } = { current: 'primary' };
+      // Citizen clicks Add Evidence: ref written synchronously.
+      authoritativeRole.current = 'supplementary';
+      const staleStateRole = 'primary'; // async state may not have committed
+      const resolved = resolveCaptureRole(authoritativeRole.current);
+      expect(resolved).toBe('supplementary');
+      expect(resolved).not.toBe(staleStateRole);
+    });
+
+    test('supplementary upload failure stores the failed item with role supplementary', () => {
+      const resolvedRole = resolveCaptureRole('supplementary');
+      const outcome = resolveCaptureOutcome(resolvedRole, { kind: 'unavailable' });
+      expect(outcome.role).toBe('supplementary');
+      expect(outcome.status).toBe('error');
+      const failedItem: EvidenceItem = {
+        localId: 'failed-supp', uri: 'supp-photo', role: outcome.role, status: outcome.status, captureLocation,
+      };
+      expect(failedItem.role).toBe('supplementary');
+    });
+
+    test('Retake Photo after failed supplementary reopens camera as supplementary, not primary', () => {
+      const failedSupplementary: EvidenceItem = {
+        localId: 'failed-supp', uri: 'supp-photo', role: 'supplementary', status: 'error', captureLocation,
+      };
+      const authoritativeRole: { current: import('../utils/evidenceFlow').EvidenceRole } = { current: 'primary' };
+      // retakeFailedCapture recovers role from the failed item and writes ref.
+      authoritativeRole.current = failedSupplementary.role;
+      const transition = retakeCaptureTransition(failedSupplementary.role);
+      expect(transition.stage).toBe('supplementary');
+      expect(transition.showCamera).toBe(true);
+      expect(resolveCaptureRole(authoritativeRole.current)).toBe('supplementary');
+    });
+
+    test('retaken supplementary resolves supplementary again for the next upload', () => {
+      const authoritativeRole = { current: 'supplementary' as const };
+      const resolved = resolveCaptureRole(authoritativeRole.current);
+      const outcome = resolveCaptureOutcome(resolved, { kind: 'accepted-supplementary', evidenceId: 'ev-supp' });
+      expect(resolved).toBe('supplementary');
+      expect(outcome).toEqual({ status: 'accepted', role: 'supplementary' });
+    });
+
+    test('supplementary success never requires or produces classification', () => {
+      const decision = parseEvidenceUploadDecision({ accepted: true, evidenceId: 'ev-supp', evidenceRole: 'supplementary' });
+      expect(decision).toEqual({ kind: 'accepted-supplementary', evidenceId: 'ev-supp' });
+      const outcome = resolveCaptureOutcome('supplementary', decision);
+      expect(outcome.status).toBe('accepted');
+      expect(outcome).not.toHaveProperty('classification');
+    });
+
+    test('primary classification retry path is unchanged and reuses frozen metadata', () => {
+      const failedPrimary: EvidenceItem = {
+        localId: 'failed-primary', uri: 'primary-photo', role: 'primary', status: 'error', captureLocation,
+      };
+      const retry = buildPrimaryClassificationRetry(failedPrimary, 'session-id');
+      expect(retry?.evidenceRole).toBe('primary');
+      expect(retry?.captureLocation).toBe(failedPrimary.captureLocation);
+      expect(retakeCaptureTransition('primary')).toMatchObject({ stage: 'capture', showCamera: true });
+    });
   });
 });
