@@ -4,7 +4,12 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Camera as CameraIcon, RotateCcw, X } from 'lucide-react-native';
 import { locationService } from '@/hooks/locationService';
-import { captureWithLocation, CaptureLocation, getShutterState } from '@/utils/evidenceFlow';
+import {
+  captureWithLocation,
+  CaptureLocation,
+  getShutterState,
+  isPhotoCaptureTimeout,
+} from '@/utils/evidenceFlow';
 
 interface CameraCaptureProps {
   onCapture: (uri: string, captureLocation: CaptureLocation) => Promise<void>;
@@ -19,6 +24,12 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
   // Fresh on every mount. The shutter is gated on this so a reopened camera
   // cannot be triggered before the native camera signals readiness.
   const [cameraReady, setCameraReady] = useState(false);
+  // Generation used as the CameraView key. Incrementing forces a full unmount
+  // and remount of the native camera, discarding any wedged takePictureAsync.
+  const [cameraGeneration, setCameraGeneration] = useState(0);
+  // Attempt identity prevents a stale (timed-out) capture's late-resolving
+  // promise from reaching onCapture after a newer attempt has begun.
+  const attemptRef = useRef(0);
 
   useEffect(() => {
     void (async () => {
@@ -42,6 +53,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
     }
     if (isProcessing) return;
 
+    const attemptId = ++attemptRef.current;
     try {
       setIsProcessing(true);
       const camera = cameraRef.current;
@@ -49,6 +61,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         () => camera.takePictureAsync({ quality: 1 }),
         () => locationService.getCurrentLocation(),
       );
+      if (attemptRef.current !== attemptId) return;
       if (!rawPhoto?.uri) throw new Error('Failed to capture image.');
 
       const normalizedPhoto = await ImageManipulator.manipulateAsync(
@@ -56,14 +69,28 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         [{ resize: { width: 500, height: 500 } }],
         { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
       );
+      if (attemptRef.current !== attemptId) return;
       await onCapture(normalizedPhoto.uri, captureLocation);
     } catch (captureError) {
+      if (attemptRef.current !== attemptId) return;
+      if (isPhotoCaptureTimeout(captureError)) {
+        setCameraReady(false);
+        setCameraGeneration(gen => gen + 1);
+        Alert.alert(
+          'Camera restarted',
+          'Camera capture took too long. The camera has been restarted. Please try again.',
+          [{ text: 'OK' }],
+        );
+        return;
+      }
       const message = captureError instanceof Error && /location/i.test(captureError.message)
         ? 'Location could not be captured. Check location access and try the photo again.'
         : 'A photo and current location are required. Check camera and location permissions, then try again.';
       Alert.alert('Capture Error', message, [{ text: 'OK' }]);
     } finally {
-      setIsProcessing(false);
+      if (attemptRef.current === attemptId) {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -91,6 +118,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
       <CameraView
+        key={cameraGeneration}
         ref={cameraRef}
         style={{ flex: 1 }}
         facing={facing}

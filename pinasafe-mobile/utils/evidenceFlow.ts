@@ -202,10 +202,28 @@ export const isValidCaptureLocation = (location: CaptureLocation | null | undefi
 // timeout we throw and never accept/upload/classify the photo.
 export const CAPTURE_LOCATION_TIMEOUT_MS = 12000;
 
-const withTimeout = <T>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
+// Bounded photo capture. expo-camera's takePictureAsync has no built-in timeout;
+// on a reopened web CameraView it can hang indefinitely waiting for a frame.
+// This fails CLOSED: on timeout we throw and never accept/upload/classify.
+export const CAPTURE_PHOTO_TIMEOUT_MS = 15000;
+
+export class PhotoCaptureTimeoutError extends Error {
+  readonly isPhotoCaptureTimeout = true;
+  constructor(
+    message = 'Camera capture took too long. The camera has been restarted. Please try again.'
+  ) {
+    super(message);
+    this.name = 'PhotoCaptureTimeoutError';
+  }
+}
+
+export const isPhotoCaptureTimeout = (error: unknown): boolean =>
+  error instanceof PhotoCaptureTimeoutError;
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, error: string | Error): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer = setTimeout(() => reject(typeof error === 'string' ? new Error(error) : error), ms);
   });
   // Attach a no-op catch to the underlying promise so a late rejection after the
   // timeout fires does not surface as an unhandled promise rejection.
@@ -221,7 +239,11 @@ export const captureWithLocation = async <Photo>(
 ) => {
   const startedAt = Date.now();
   const [photo, location] = await Promise.all([
-    takePhoto(),
+    withTimeout(
+      takePhoto(),
+      CAPTURE_PHOTO_TIMEOUT_MS,
+      new PhotoCaptureTimeoutError()
+    ),
     withTimeout(
       acquireLocation(),
       CAPTURE_LOCATION_TIMEOUT_MS,

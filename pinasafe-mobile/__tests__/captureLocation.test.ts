@@ -2,8 +2,10 @@ import {
   captureWithLocation,
   CaptureLocation,
   CAPTURE_LOCATION_TIMEOUT_MS,
+  CAPTURE_PHOTO_TIMEOUT_MS,
   EvidenceItem,
   getFirstAcceptedCaptureLocation,
+  isPhotoCaptureTimeout,
   isValidCaptureLocation,
 } from '../utils/evidenceFlow';
 import type { LocationData } from '../hooks/locationService';
@@ -123,6 +125,81 @@ describe('capture-time location contract', () => {
       expect(result.photo).toEqual({ uri: 'second-photo' });
       expect(result.captureLocation.latitude).toBe(7);
       expect(result.captureLocation.longitude).toBe(8);
+    });
+  });
+
+  describe('bounded photo capture (V3.1.2)', () => {
+    test('fails closed when takePhoto never resolves within the photo timeout', async () => {
+      jest.useFakeTimers();
+      try {
+        const neverResolves = () => new Promise<{ uri: string }>(() => {});
+        const acquireLocation = jest.fn(async () => currentLocation());
+        const operation = captureWithLocation(neverResolves, acquireLocation);
+        const assertion = expect(operation).rejects.toThrow(/camera capture took too long/i);
+        await jest.advanceTimersByTimeAsync(CAPTURE_PHOTO_TIMEOUT_MS);
+        await assertion;
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('photo timeout is distinguishable from location timeout and other errors', async () => {
+      jest.useFakeTimers();
+      try {
+        const neverResolves = () => new Promise<{ uri: string }>(() => {});
+        const operation = captureWithLocation(neverResolves, async () => currentLocation());
+        const rejection = jest.fn();
+        operation.catch(rejection);
+        await jest.advanceTimersByTimeAsync(CAPTURE_PHOTO_TIMEOUT_MS);
+        await Promise.resolve();
+        expect(rejection).toHaveBeenCalledTimes(1);
+        expect(isPhotoCaptureTimeout(rejection.mock.calls[0][0])).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('late photo resolution after timeout does not produce a successful capture', async () => {
+      jest.useFakeTimers();
+      try {
+        let resolvePhoto!: (photo: { uri: string }) => void;
+        const takePhoto = () => new Promise<{ uri: string }>(resolve => { resolvePhoto = resolve; });
+        const operation = captureWithLocation(takePhoto, async () => currentLocation());
+        const assertion = expect(operation).rejects.toThrow(/camera capture took too long/i);
+        await jest.advanceTimersByTimeAsync(CAPTURE_PHOTO_TIMEOUT_MS);
+        await assertion;
+        // Late resolution must not cause an unhandled rejection or change outcome.
+        resolvePhoto({ uri: 'late-photo' });
+        await jest.advanceTimersByTimeAsync(1000);
+        // The operation already rejected; late resolution is swallowed by the guard.
+        await expect(operation).rejects.toThrow(/camera capture took too long/i);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('location timeout still fires when photo succeeds but location never resolves', async () => {
+      jest.useFakeTimers();
+      try {
+        const takePhoto = jest.fn(async () => ({ uri: 'photo' }));
+        const neverResolves = () => new Promise<LocationData | null>(() => {});
+        const operation = captureWithLocation(takePhoto, neverResolves);
+        const assertion = expect(operation).rejects.toThrow(/location could not be captured/i);
+        await jest.advanceTimersByTimeAsync(CAPTURE_LOCATION_TIMEOUT_MS);
+        await assertion;
+        expect(isPhotoCaptureTimeout(await operation.catch(e => e))).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('normal capture succeeds when both photo and location resolve in time', async () => {
+      const result = await captureWithLocation(
+        async () => ({ uri: 'normal-photo' }),
+        async () => currentLocation(),
+      );
+      expect(result.photo.uri).toBe('normal-photo');
+      expect(result.captureLocation.latitude).toBe(0);
     });
   });
 });
