@@ -19,6 +19,7 @@ import {
   parseEvidenceUploadDecision,
   resolveCaptureOutcome,
   resolveCaptureRole,
+  getShutterState,
   retakeCaptureTransition,
   retryClassificationTransition,
 } from '../utils/evidenceFlow';
@@ -336,6 +337,36 @@ describe('durable citizen evidence flow', () => {
       expect(retry?.evidenceRole).toBe('primary');
       expect(retry?.captureLocation).toBe(failedPrimary.captureLocation);
       expect(retakeCaptureTransition('primary')).toMatchObject({ stage: 'capture', showCamera: true });
+    });
+  });
+
+  // These exercise the exact shutter-gate helper that CameraCapture calls in
+  // production, so they cover the real gating decision rather than a helper
+  // reimplementation.
+  describe('V3.1.1 camera shutter readiness gate (production helper)', () => {
+    const ready = { permissionGranted: true, cameraRefAvailable: true, cameraReady: true, isProcessing: false };
+
+    test('shutter is disabled before camera ready (starting)', () => {
+      expect(getShutterState({ ...ready, cameraReady: false })).toEqual({ enabled: false, reason: 'starting' });
+      expect(getShutterState({ ...ready, cameraRefAvailable: false })).toEqual({ enabled: false, reason: 'starting' });
+    });
+
+    test('onCameraReady (cameraReady=true) enables capture', () => {
+      expect(getShutterState(ready)).toEqual({ enabled: true, reason: null });
+    });
+
+    test('shutter is disabled while processing and without permission', () => {
+      expect(getShutterState({ ...ready, isProcessing: true })).toEqual({ enabled: false, reason: 'processing' });
+      expect(getShutterState({ ...ready, permissionGranted: false })).toEqual({ enabled: false, reason: 'permission' });
+    });
+
+    test('a fresh second camera session is ready-gated independently of the first', () => {
+      const firstSession = getShutterState(ready);
+      const secondSessionStarting = getShutterState({ ...ready, cameraReady: false });
+      const secondSessionReady = getShutterState(ready);
+      expect(firstSession.enabled).toBe(true);
+      expect(secondSessionStarting.enabled).toBe(false);
+      expect(secondSessionReady.enabled).toBe(true);
     });
   });
 });

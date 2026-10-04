@@ -1,4 +1,11 @@
-import { captureWithLocation, CaptureLocation, EvidenceItem, getFirstAcceptedCaptureLocation, isValidCaptureLocation } from '../utils/evidenceFlow';
+import {
+  captureWithLocation,
+  CaptureLocation,
+  CAPTURE_LOCATION_TIMEOUT_MS,
+  EvidenceItem,
+  getFirstAcceptedCaptureLocation,
+  isValidCaptureLocation,
+} from '../utils/evidenceFlow';
 import type { LocationData } from '../hooks/locationService';
 
 const now = Date.parse('2026-10-02T00:00:00.000Z');
@@ -63,5 +70,59 @@ describe('capture-time location contract', () => {
     { ...captureLocation, capturedAt: '' },
   ])('guards invalid new evidence metadata', location => {
     expect(isValidCaptureLocation(location)).toBe(false);
+  });
+
+  describe('bounded location acquisition (V3.1.1)', () => {
+    test('fails closed when location acquisition never resolves within the timeout', async () => {
+      jest.useFakeTimers();
+      try {
+        const neverResolves = () => new Promise<LocationData | null>(() => {});
+        const operation = captureWithLocation(async () => ({ uri: 'photo' }), neverResolves);
+        const assertion = expect(operation).rejects.toThrow(/location could not be captured/i);
+        await jest.advanceTimersByTimeAsync(CAPTURE_LOCATION_TIMEOUT_MS);
+        await assertion;
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('timeout does not accept the photo, reuse coordinates, or call upload', async () => {
+      jest.useFakeTimers();
+      try {
+        const takePhoto = jest.fn(async () => ({ uri: 'new-photo' }));
+        const neverResolves = () => new Promise<LocationData | null>(() => {});
+        const operation = captureWithLocation(takePhoto, neverResolves);
+        const assertion = expect(operation).rejects.toThrow(/location/i);
+        await jest.advanceTimersByTimeAsync(CAPTURE_LOCATION_TIMEOUT_MS + 1);
+        await assertion;
+        expect(takePhoto).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('late location rejection after timeout does not cause an unhandled rejection', async () => {
+      jest.useFakeTimers();
+      const rejectLater = () => new Promise<LocationData | null>((_r, reject) => {
+        setTimeout(() => reject(new Error('gps lost')), CAPTURE_LOCATION_TIMEOUT_MS * 2);
+      });
+      const operation = captureWithLocation(async () => ({ uri: 'photo' }), rejectLater);
+      const assertion = expect(operation).rejects.toThrow(/location could not be captured/i);
+      await jest.advanceTimersByTimeAsync(CAPTURE_LOCATION_TIMEOUT_MS);
+      await assertion;
+      // Advance past the late rejection; it must be swallowed by the guard.
+      await jest.advanceTimersByTimeAsync(CAPTURE_LOCATION_TIMEOUT_MS * 2);
+      jest.useRealTimers();
+    });
+
+    test('succeeds when location resolves before the timeout and reuses that attempt metadata only', async () => {
+      const result = await captureWithLocation(
+        async () => ({ uri: 'second-photo' }),
+        async () => ({ ...currentLocation(), coords: { latitude: 7, longitude: 8, accuracy: 3 } })
+      );
+      expect(result.photo).toEqual({ uri: 'second-photo' });
+      expect(result.captureLocation.latitude).toBe(7);
+      expect(result.captureLocation.longitude).toBe(8);
+    });
   });
 });

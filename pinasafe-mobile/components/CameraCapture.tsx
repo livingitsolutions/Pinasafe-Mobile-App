@@ -4,7 +4,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Camera as CameraIcon, RotateCcw, X } from 'lucide-react-native';
 import { locationService } from '@/hooks/locationService';
-import { captureWithLocation, CaptureLocation } from '@/utils/evidenceFlow';
+import { captureWithLocation, CaptureLocation, getShutterState } from '@/utils/evidenceFlow';
 
 interface CameraCaptureProps {
   onCapture: (uri: string, captureLocation: CaptureLocation) => Promise<void>;
@@ -16,6 +16,9 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [isProcessing, setIsProcessing] = useState(false);
+  // Fresh on every mount. The shutter is gated on this so a reopened camera
+  // cannot be triggered before the native camera signals readiness.
+  const [cameraReady, setCameraReady] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -23,8 +26,21 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
     })();
   }, [permission, requestPermission]);
 
+  const shutterState = getShutterState({
+    permissionGranted: Boolean(permission?.granted),
+    cameraRefAvailable: cameraRef.current !== null,
+    cameraReady,
+    isProcessing,
+  });
+
   const takePicture = async () => {
-    if (!cameraRef.current || isProcessing) return;
+    // Fail safely instead of a silent dead shutter when the camera is not ready
+    // or the native ref is unavailable.
+    if (!permission?.granted || cameraRef.current === null || !cameraReady) {
+      Alert.alert('Camera starting', 'Camera is still starting. Please try again in a moment.', [{ text: 'OK' }]);
+      return;
+    }
+    if (isProcessing) return;
 
     try {
       setIsProcessing(true);
@@ -41,15 +57,21 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
       );
       await onCapture(normalizedPhoto.uri, captureLocation);
-    } catch {
-      Alert.alert(
-        'Capture Error',
-        'A photo and current location are required. Check camera and location permissions, then try again.',
-        [{ text: 'OK' }]
-      );
+    } catch (captureError) {
+      const message = captureError instanceof Error && /location/i.test(captureError.message)
+        ? 'Location could not be captured. Check location access and try the photo again.'
+        : 'A photo and current location are required. Check camera and location permissions, then try again.';
+      Alert.alert('Capture Error', message, [{ text: 'OK' }]);
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const toggleFacing = () => {
+    // Changing lens reinitializes the native camera; treat readiness
+    // conservatively until onCameraReady fires again.
+    setCameraReady(false);
+    setFacing(current => (current === 'back' ? 'front' : 'back'));
   };
 
   if (!permission?.granted) {
@@ -68,7 +90,12 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
 
   return (
     <View style={{ flex: 1, backgroundColor: 'black' }}>
-      <CameraView ref={cameraRef} style={{ flex: 1 }} facing={facing} />
+      <CameraView
+        ref={cameraRef}
+        style={{ flex: 1 }}
+        facing={facing}
+        onCameraReady={() => setCameraReady(true)}
+      />
 
       <View
         style={{
@@ -87,7 +114,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
           <X size={22} color="white" strokeWidth={1.5} />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => setFacing(current => current === 'back' ? 'front' : 'back')}
+          onPress={toggleFacing}
           style={{ padding: 10, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.4)' }}
         >
           <RotateCcw size={22} color="white" strokeWidth={1.5} />
@@ -115,28 +142,42 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
             <Text style={{ color: 'white', marginTop: 8 }}>Uploading and classifying…</Text>
           </View>
         )}
+        {!isProcessing && shutterState.reason === 'starting' && (
+          <View
+            style={{
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              padding: 16,
+              borderRadius: 12,
+              marginBottom: 16,
+            }}
+          >
+            <ActivityIndicator size="large" color="#fff" />
+            <Text style={{ color: 'white', marginTop: 8 }}>Starting camera…</Text>
+          </View>
+        )}
         <TouchableOpacity
           onPress={takePicture}
-          disabled={isProcessing}
+          disabled={!shutterState.enabled}
+          accessibilityState={{ disabled: !shutterState.enabled }}
           style={{
             width: 90,
             height: 90,
             borderRadius: 50,
-            backgroundColor: isProcessing ? '#888' : 'white',
+            backgroundColor: shutterState.enabled ? 'white' : '#888',
             justifyContent: 'center',
             alignItems: 'center',
             borderWidth: 5,
-            borderColor: isProcessing ? '#555' : '#dc2626',
+            borderColor: shutterState.enabled ? '#dc2626' : '#555',
           }}
         >
           <CameraIcon
             size={30}
-            color={isProcessing ? '#333' : '#dc2626'}
+            color={shutterState.enabled ? '#dc2626' : '#333'}
             strokeWidth={1.6}
           />
         </TouchableOpacity>
         <Text style={{ color: 'white', marginTop: 14 }}>
-          Take a clear photo for server verification
+          {shutterState.reason === 'starting' ? 'Starting camera…' : 'Take a clear photo for server verification'}
         </Text>
       </View>
     </View>

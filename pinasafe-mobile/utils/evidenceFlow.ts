@@ -197,12 +197,37 @@ export const isValidCaptureLocation = (location: CaptureLocation | null | undefi
     && new Date(location.capturedAt).toISOString() === location.capturedAt;
 };
 
+// Bounded location acquisition. Mobile GPS re-acquisition on a reopened camera
+// can otherwise hang the whole capture indefinitely. This fails CLOSED: on
+// timeout we throw and never accept/upload/classify the photo.
+export const CAPTURE_LOCATION_TIMEOUT_MS = 12000;
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  // Attach a no-op catch to the underlying promise so a late rejection after the
+  // timeout fires does not surface as an unhandled promise rejection.
+  const guarded = Promise.resolve(promise).catch(() => undefined as unknown as T);
+  return Promise.race([guarded, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+};
+
 export const captureWithLocation = async <Photo>(
   takePhoto: () => Promise<Photo>,
   acquireLocation: () => Promise<LocationData | null>,
 ) => {
   const startedAt = Date.now();
-  const [photo, location] = await Promise.all([takePhoto(), acquireLocation()]);
+  const [photo, location] = await Promise.all([
+    takePhoto(),
+    withTimeout(
+      acquireLocation(),
+      CAPTURE_LOCATION_TIMEOUT_MS,
+      'Location could not be captured in time. Check location access and try the photo again.'
+    ),
+  ]);
   if (!location || !Number.isFinite(location.timestamp)
     || location.timestamp < startedAt - 5000 || location.timestamp > Date.now() + 1000) {
     throw new Error('A current capture location is required. Check location permission and try again.');
@@ -228,6 +253,25 @@ export const getFirstAcceptedCaptureLocation = (items: EvidenceItem[]) =>
 
 export const MAX_ACCEPTED_EVIDENCE = 5;
 export const MAX_SUPPLEMENTARY_EVIDENCE = 4;
+
+/**
+ * Production shutter gate for CameraCapture. The shutter is enabled only when
+ * the camera is fully ready; otherwise capture is blocked and the UI shows a
+ * concise reason instead of a dead shutter. This is the single source of truth
+ * the component calls directly.
+ */
+export type ShutterBlockReason = 'permission' | 'starting' | 'processing' | null;
+export const getShutterState = (input: {
+  permissionGranted: boolean;
+  cameraRefAvailable: boolean;
+  cameraReady: boolean;
+  isProcessing: boolean;
+}): { enabled: boolean; reason: ShutterBlockReason } => {
+  if (!input.permissionGranted) return { enabled: false, reason: 'permission' };
+  if (!input.cameraRefAvailable || !input.cameraReady) return { enabled: false, reason: 'starting' };
+  if (input.isProcessing) return { enabled: false, reason: 'processing' };
+  return { enabled: true, reason: null };
+};
 
 export const countAcceptedEvidence = (items: EvidenceItem[]) =>
   items.filter(item => item.status === 'accepted').length;
