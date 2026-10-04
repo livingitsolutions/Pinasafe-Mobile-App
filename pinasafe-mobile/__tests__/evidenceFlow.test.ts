@@ -406,6 +406,16 @@ describe('durable citizen evidence flow', () => {
   describe('V3.1.1 camera shutter readiness gate (production helper)', () => {
     const ready = { permissionGranted: true, cameraRefAvailable: true, cameraReady: true, isProcessing: false };
 
+    test.each([
+      ['permission missing', { ...ready, permissionGranted: false }, false, 'permission'],
+      ['ref missing', { ...ready, cameraRefAvailable: false }, false, 'starting'],
+      ['camera not ready', { ...ready, cameraReady: false }, false, 'starting'],
+      ['processing', { ...ready, isProcessing: true }, false, 'processing'],
+      ['all prerequisites satisfied', ready, true, null],
+    ])('diagnostic shutter state: %s', (_label, input, enabled, reason) => {
+      expect(getShutterState(input)).toEqual({ enabled, reason });
+    });
+
     test('shutter is disabled before camera ready (starting)', () => {
       expect(getShutterState({ ...ready, cameraReady: false })).toEqual({ enabled: false, reason: 'starting' });
       expect(getShutterState({ ...ready, cameraRefAvailable: false })).toEqual({ enabled: false, reason: 'starting' });
