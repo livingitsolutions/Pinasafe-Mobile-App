@@ -161,7 +161,7 @@ const requireCaptureLocation = (req, res, next) => {
   }
 
   const evidenceRole = req.body.evidenceRole || 'primary';
-  if (!['primary', 'supplementary'].includes(evidenceRole)) {
+  if (evidenceRole !== 'primary') {
     return res.status(400).json({ error: 'Invalid evidence role' });
   }
 

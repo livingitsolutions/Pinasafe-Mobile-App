@@ -329,8 +329,7 @@ export const canSubmitEvidenceReport = (
     uploadSessionId
     && incidentType
     && primaryItems.length === 1
-    && countAcceptedEvidence(items) <= MAX_ACCEPTED_EVIDENCE
-    && supplementaryItems.length <= MAX_SUPPLEMENTARY_EVIDENCE
+    && supplementaryItems.length === 0
     && items.every(item => item.status !== 'uploading' && item.status !== 'error')
     && primary?.classification?.accepted === true
     && (primary.classification.label === 'fire' || primary.classification.label === 'road')
@@ -338,9 +337,6 @@ export const canSubmitEvidenceReport = (
     && primary.classification.action === 'accept'
     && primary.classification.label === incidentType
     && isValidCaptureLocation(primary.captureLocation)
-    && supplementaryItems.every(item =>
-      isValidCaptureLocation(item.captureLocation) && item.classification == null
-    )
   );
 };
 

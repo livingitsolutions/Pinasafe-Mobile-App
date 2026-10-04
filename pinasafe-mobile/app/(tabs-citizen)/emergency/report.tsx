@@ -13,16 +13,12 @@ import {
   canSubmitEvidenceReport,
   classificationFailureTransition,
   discardFailedCapture,
-  countAcceptedEvidence,
-  countAcceptedSupplementaryEvidence,
   EvidenceFlowStage,
   EvidenceItem,
   EvidenceRole,
   getClassificationRecoveryContent,
   getFirstAcceptedPrimaryEvidence,
   IncidentType,
-  MAX_ACCEPTED_EVIDENCE,
-  MAX_SUPPLEMENTARY_EVIDENCE,
   CaptureLocation,
   getFirstAcceptedCaptureLocation,
   isValidCaptureLocation,
@@ -51,15 +47,13 @@ export default function ReportEmergency() {
   const [failedCaptureId, setFailedCaptureId] = useState<string | null>(null);
   const [locationStatus, setLocationStatus] = useState<'idle' | 'fetching' | 'denied' | 'ready'>('idle');
   const lock = useRef(false);
-  // Authoritative per-shutter role. Written synchronously before the camera
-  // opens; read exactly once at shutter time into a local constant so the
-  // upload/failure/stage path can never observe a stale role closure.
+  // Authoritative per-shutter role. Always 'primary' for new citizen reports.
   const captureRoleRef = useRef<EvidenceRole>('primary');
   const [cameraNonce, setCameraNonce] = useState(0);
-  const accepted = countAcceptedEvidence(evidence);
+  const acceptedPrimary = getFirstAcceptedPrimaryEvidence(evidence);
   const captureLocation = getFirstAcceptedCaptureLocation(evidence);
   const uploading = evidence.some(item => item.status === 'uploading');
-  const supplementaryCount = countAcceptedSupplementaryEvidence(evidence);
+  const hasAcceptedPrimary = Boolean(acceptedPrimary);
   const recoveryContent = getClassificationRecoveryContent(classificationUnavailable, classificationRetryAvailable);
 
   const ensureSession = async () => {
@@ -71,14 +65,9 @@ export default function ReportEmergency() {
     return id;
   };
 
-  const openCamera = (role: EvidenceRole = 'primary') => {
-    if (
-      busy || uploading || accepted >= MAX_ACCEPTED_EVIDENCE
-      || (role === 'supplementary' && supplementaryCount >= MAX_SUPPLEMENTARY_EVIDENCE)
-    ) return;
-    // Synchronously record the authoritative role before the camera mounts so
-    // the shutter closure reads the intended role regardless of state timing.
-    captureRoleRef.current = role;
+  const openCamera = () => {
+    if (busy || uploading || hasAcceptedPrimary) return;
+    captureRoleRef.current = 'primary';
     setError('');
     setCameraNonce(n => n + 1);
     setShowCamera(true);
@@ -91,9 +80,7 @@ export default function ReportEmergency() {
     setEvidence(items => discardFailedCapture(items, failedCaptureId));
     setFailedCaptureId(null);
     const transition = retakeCaptureTransition(failed.role);
-    // Preserve the failed capture's own role synchronously; a failed
-    // supplementary retake must reopen the camera as supplementary, not primary.
-    captureRoleRef.current = failed.role;
+    captureRoleRef.current = 'primary';
     setStage(transition.stage);
     setCameraNonce(n => n + 1);
     setShowCamera(transition.showCamera);
@@ -132,7 +119,7 @@ export default function ReportEmergency() {
           ? { ...item, status: 'accepted', classification: { accepted: true, ...decision.classification }, reason: undefined }
           : item));
         setIncidentType(current => current ?? decision.classification.label as IncidentType);
-        if (accepted === 0 && retry.captureLocation.address) setLocation(retry.captureLocation.address);
+        if (!hasAcceptedPrimary && retry.captureLocation.address) setLocation(retry.captureLocation.address);
         setFailedCaptureId(null);
         setStage(acceptedClassificationTransition().stage);
       } else if (decision.kind === 'rejected-primary') {
@@ -166,8 +153,6 @@ export default function ReportEmergency() {
     setClassificationRetryAvailable(false);
     setFailedCaptureId(null);
 
-    // Resolve the intended role exactly once from the authoritative ref so this
-    // whole shutter→upload→failure operation is immutable with respect to role.
     const resolvedRole = captureRoleRef.current;
 
     if (!isValidCaptureLocation(captureLoc)) {
@@ -189,15 +174,10 @@ export default function ReportEmergency() {
         throw Object.assign(new Error('The evidence response was unusable.'), { code: 'INVALID_EVIDENCE_RESPONSE' });
       }
 
-      if (decision.kind === 'accepted-supplementary' && resolvedRole === 'supplementary') {
-        setEvidence(items => items.map(item => item.localId === localId
-          ? { ...item, status: 'accepted', reason: undefined }
-          : item));
-        setStage('supplementary');
-      } else if (decision.kind === 'accepted-primary' && resolvedRole === 'primary') {
+      if (decision.kind === 'accepted-primary' && resolvedRole === 'primary') {
         const label = decision.classification.label as IncidentType;
         setIncidentType(current => current ?? label);
-        if (accepted === 0 && captureLoc.address) setLocation(captureLoc.address);
+        if (!hasAcceptedPrimary && captureLoc.address) setLocation(captureLoc.address);
         setEvidence(items => items.map(item => item.localId === localId
           ? { ...item, status: 'accepted', classification: { accepted: true, ...decision.classification }, reason: undefined }
           : item));
@@ -219,17 +199,15 @@ export default function ReportEmergency() {
       const classifierUnavailable = isApiError(cause)
         && cause.status === 503
         && cause.message === 'Classification service unavailable';
-      const transition = resolvedRole === 'primary'
-        ? classificationFailureTransition()
-        : { stage: 'supplementary' as const, showCamera: false, classificationUnavailable: false };
+      const transition = classificationFailureTransition();
       setEvidence(items => items.map(item => item.localId === localId
         ? { ...item, status: 'error', reason: 'This photo was not accepted.' }
         : item));
       setFailedCaptureId(localId);
       setStage(transition.stage);
       setShowCamera(transition.showCamera);
-      setClassificationUnavailable(resolvedRole === 'primary' && classifierUnavailable);
-      setClassificationRetryAvailable(resolvedRole === 'primary' && classifierUnavailable);
+      setClassificationUnavailable(classifierUnavailable);
+      setClassificationRetryAvailable(classifierUnavailable);
       if (!classifierUnavailable) setError('This photo could not be uploaded. Retake it before continuing.');
     } finally {
       setBusy(false);
@@ -273,8 +251,6 @@ export default function ReportEmergency() {
   };
 
   if (showCamera) {
-    // Key by role + nonce so each camera open is a clean lifecycle; the
-    // authoritative role ref (not this remount) is the correctness mechanism.
     return <CameraCapture key={`${captureRoleRef.current}-${cameraNonce}`} onCapture={handleCapture} onCancel={() => setShowCamera(false)} />;
   }
 
@@ -296,7 +272,7 @@ export default function ReportEmergency() {
   if (stage === 'capture') {
     return (
       <Screen>
-        <PageHeader eyebrow="Step 1 of 5" title="Capture primary evidence" description="Take one live-camera photo. The server will verify and classify it automatically." />
+        <PageHeader eyebrow="Step 1 of 3" title="Capture primary evidence" description="Take one live-camera photo. The server will verify and classify it automatically." />
         {recoveryContent ? (
           <Banner title={recoveryContent.title} message={recoveryContent.message} tone="error" />
         ) : null}
@@ -312,7 +288,7 @@ export default function ReportEmergency() {
                   <Image accessibilityLabel="Captured incident evidence" source={{ uri: item.uri }} style={styles.image} />
                   <View style={styles.evidenceCopy}>
                     <Text style={styles.evidenceStatus}>
-                      {item.status === 'uploading' ? (item.role === 'primary' ? 'AI classification in progress' : 'Saving supplementary evidence')
+                      {item.status === 'uploading' ? 'AI classification in progress'
                         : item.status === 'accepted' ? `Accepted as ${item.classification?.label}`
                         : item.status === 'rejected' ? 'Primary image rejected'
                         : 'Photo not accepted'}
@@ -336,12 +312,8 @@ export default function ReportEmergency() {
           ) : failedCaptureId ? (
             <Button label="Retake Photo" onPress={retakeFailedCapture} disabled={busy} loading={busy} icon={<Camera size={19} color={colors.white} />} />
           ) : (
-            <Button label="Capture Primary Evidence" onPress={() => openCamera('primary')} disabled={accepted >= MAX_ACCEPTED_EVIDENCE} loading={busy} icon={<Camera size={19} color={colors.white} />} />
+            <Button label="Capture Primary Evidence" onPress={openCamera} disabled={hasAcceptedPrimary} loading={busy} icon={<Camera size={19} color={colors.white} />} />
           )}
-          <Text style={styles.counter}>{accepted} of {MAX_ACCEPTED_EVIDENCE} accepted</Text>
-          {accepted > 0 ? (
-            <Button label="Continue to classification result" onPress={() => setStage('verify')} icon={<Check size={18} color={colors.white} />} />
-          ) : null}
         </Section>
       </Screen>
     );
@@ -350,7 +322,7 @@ export default function ReportEmergency() {
   if (stage === 'verify') {
     return (
       <Screen>
-        <PageHeader eyebrow="Step 3 of 5" title="Classification result" description="Review the authoritative incident type and primary capture location." />
+        <PageHeader eyebrow="Step 2 of 3" title="Classification result" description="Review the authoritative incident type and primary capture location." />
         {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
         <Section title="AI classification result">
           <Card tone="critical">
@@ -391,39 +363,7 @@ export default function ReportEmergency() {
           </Card>
         </Section>
         <View style={styles.actions}>
-          <Button variant="secondary" label="Add Evidence" onPress={() => setStage('supplementary')} disabled={accepted >= MAX_ACCEPTED_EVIDENCE} icon={<Camera size={18} color={colors.ink} />} />
           <Button label="Continue" onPress={() => setStage('review')} icon={<Check size={18} color={colors.white} />} />
-        </View>
-      </Screen>
-    );
-  }
-
-  if (stage === 'supplementary') {
-    return (
-      <Screen>
-        <PageHeader eyebrow="Step 4 of 5" title="Optional additional evidence" description="Additional evidence is optional. Add up to 4 more photos to help responders understand the incident." />
-        {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
-        <Section title="Supplementary evidence">
-          {evidence.filter(item => item.role === 'supplementary').map(item => (
-            <Card key={item.localId} style={styles.evidence}>
-              <Image accessibilityLabel="Supplementary incident evidence" source={{ uri: item.uri }} style={styles.image} />
-              <View style={styles.evidenceCopy}>
-                <Text style={styles.evidenceStatus}>{item.status === 'accepted' ? 'Supplementary evidence accepted' : item.status === 'uploading' ? 'Saving supplementary evidence' : 'Photo not accepted'}</Text>
-                {item.reason ? <Text style={styles.errorText}>{item.reason}</Text> : null}
-                <Text style={styles.captureLoc}>Captured at {item.captureLocation.latitude.toFixed(4)}, {item.captureLocation.longitude.toFixed(4)}</Text>
-              </View>
-            </Card>
-          ))}
-          {failedCaptureId ? (
-            <Button variant="secondary" label="Retake Photo" onPress={retakeFailedCapture} disabled={busy} loading={busy} icon={<Camera size={18} color={colors.ink} />} />
-          ) : (
-            <Button label="Add Evidence" onPress={() => openCamera('supplementary')} disabled={busy || uploading || accepted >= MAX_ACCEPTED_EVIDENCE || supplementaryCount >= MAX_SUPPLEMENTARY_EVIDENCE} loading={busy} icon={<Camera size={18} color={colors.white} />} />
-          )}
-          <Text style={styles.counter}>{accepted} / {MAX_ACCEPTED_EVIDENCE}</Text>
-        </Section>
-        <View style={styles.actions}>
-          <Button variant="secondary" label="Back" onPress={() => setStage('verify')} />
-          <Button label="Continue" onPress={() => setStage('review')} disabled={uploading || Boolean(failedCaptureId)} icon={<Check size={18} color={colors.white} />} />
         </View>
       </Screen>
     );
@@ -432,7 +372,7 @@ export default function ReportEmergency() {
   // stage === 'review'
   return (
     <Screen>
-      <PageHeader eyebrow="Step 5 of 5" title="Review and submit" description="Add an optional description, then submit your emergency report." />
+      <PageHeader eyebrow="Step 3 of 3" title="Review and submit" description="Add an optional description, then submit your emergency report." />
       {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
       <Section title="Incident summary">
         <Card tone="critical">
@@ -446,13 +386,12 @@ export default function ReportEmergency() {
               <Text style={styles.reviewCoords}>{captureLocation.latitude.toFixed(4)}, {captureLocation.longitude.toFixed(4)}</Text>
             </View>
           ) : null}
-          <Text style={styles.counter}>{accepted} / {MAX_ACCEPTED_EVIDENCE} accepted evidence items</Text>
         </Card>
-        {evidence.filter(item => item.role === 'supplementary' && item.status === 'accepted').map(item => (
+        {evidence.filter(item => item.role === 'primary' && item.status === 'accepted').map(item => (
           <Card key={item.localId} style={styles.evidence}>
-            <Image accessibilityLabel="Supplementary incident evidence" source={{ uri: item.uri }} style={styles.image} />
+            <Image accessibilityLabel="Primary incident evidence" source={{ uri: item.uri }} style={styles.image} />
             <View style={styles.evidenceCopy}>
-              <Text style={styles.evidenceStatus}>Supplementary evidence</Text>
+              <Text style={styles.evidenceStatus}>Primary evidence</Text>
               <Text style={styles.captureLoc}>Captured at {item.captureLocation.latitude.toFixed(4)}, {item.captureLocation.longitude.toFixed(4)}</Text>
               <Text style={styles.timestampText}>Captured at {new Date(item.captureLocation.capturedAt).toLocaleString()}</Text>
             </View>

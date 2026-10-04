@@ -289,26 +289,16 @@ describe('strict evidence multipart ingestion boundary', () => {
     expect(response.status).toBe(400);
   });
 
-  test('accepts supplementary role with required per-image capture metadata', async () => {
+  test('rejects supplementary role before persistence (V3.2A single-primary enforcement)', async () => {
     buildSessionQuery({ data: activeSession() });
-    persistEvidenceImage.mockResolvedValue({
-      accepted: true,
-      evidenceId: '123e4567-e89b-12d3-a456-426614174010',
-      evidenceRole: 'supplementary'
-    });
 
     const response = await attachImage(buildApp(), {
       fields: { ...captureFields, evidenceRole: 'supplementary' }
     });
 
-    expect(response.status).toBe(201);
-    expect(response.body.data.evidenceRole).toBe('supplementary');
-    expect(response.body.data).not.toHaveProperty('classification');
-    expect(persistEvidenceImage).toHaveBeenCalledWith(expect.objectContaining({
-      ownerUserId: citizen.id,
-      evidenceRole: 'supplementary',
-      captureLocation: expect.objectContaining({ latitude: 10.5, longitude: 124.9 })
-    }));
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: 'Invalid evidence role' });
+    expect(persistEvidenceImage).not.toHaveBeenCalled();
   });
 
   test('rejects JPEG MIME metadata without JPEG markers', async () => {

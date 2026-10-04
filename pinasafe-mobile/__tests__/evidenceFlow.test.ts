@@ -15,7 +15,6 @@ import {
   CaptureLocation,
   getClassificationRecoveryContent,
   MAX_ACCEPTED_EVIDENCE,
-  MAX_SUPPLEMENTARY_EVIDENCE,
   parseEvidenceUploadDecision,
   resolveCaptureOutcome,
   resolveCaptureRole,
@@ -26,6 +25,24 @@ import {
 import type { PrivateEvidenceItem } from '../services/apiService';
 
 const captureLocation: CaptureLocation = { latitude: 0, longitude: 1, capturedAt: '2026-10-02T00:00:00.000Z' };
+
+const validPrimary = (overrides: Partial<EvidenceItem> = {}): EvidenceItem => ({
+  localId: 'primary',
+  uri: 'primary-photo',
+  role: 'primary',
+  status: 'accepted',
+  classification: {
+    accepted: true,
+    label: 'road',
+    confidence: 0.88,
+    status: 'valid',
+    action: 'accept',
+    reason: null,
+    caption: null,
+  },
+  captureLocation,
+  ...overrides,
+});
 
 describe('durable citizen evidence flow', () => {
   test('only accepted evidence counts toward the maximum of five', () => {
@@ -229,61 +246,105 @@ describe('durable citizen evidence flow', () => {
     expect(acceptedClassificationTransition().stage).toBe('verify');
   });
 
-  test('primary-only submission is valid and supplementary evidence is optional', () => {
-    const primary: EvidenceItem = {
-      localId: 'primary',
-      uri: 'primary-photo',
-      role: 'primary',
-      status: 'accepted',
-      classification: {
-        accepted: true,
-        label: 'road',
-        confidence: 0.88,
-        status: 'valid',
-        action: 'accept',
-        reason: null,
-        caption: null,
-      },
-      captureLocation,
-    };
-    const supplementary = Array.from({ length: MAX_SUPPLEMENTARY_EVIDENCE }, (_, index): EvidenceItem => ({
-      localId: `supplementary-${index}`,
-      uri: `supplementary-photo-${index}`,
-      role: 'supplementary',
-      status: 'accepted',
-      captureLocation: { ...captureLocation, latitude: index + 1 },
-    }));
+  // ─── V3.2A single-primary submission invariant ───────────────────────────
 
-    expect(canSubmitEvidenceReport([primary], 'session-id', 'road')).toBe(true);
-    expect(canSubmitEvidenceReport([primary, ...supplementary], 'session-id', 'road')).toBe(true);
-    expect(countAcceptedSupplementaryEvidence([primary, ...supplementary])).toBe(4);
-    expect(canSubmitEvidenceReport([primary, ...supplementary, {
-      ...supplementary[0], localId: 'fifth-supplementary'
-    }], 'session-id', 'road')).toBe(false);
-    expect(canSubmitEvidenceReport(supplementary, 'session-id', 'road')).toBe(false);
-    expect(canSubmitEvidenceReport([primary], null, 'road')).toBe(false);
-    expect(canSubmitEvidenceReport([primary], 'session-id', 'fire')).toBe(false);
+  describe('V3.2A single-primary submission invariant', () => {
+    test('A. exactly one accepted primary + valid classification/location → submission allowed', () => {
+      expect(canSubmitEvidenceReport([validPrimary()], 'session-id', 'road')).toBe(true);
+    });
+
+    test('B. zero primary → denied', () => {
+      expect(canSubmitEvidenceReport([], 'session-id', 'road')).toBe(false);
+      expect(canSubmitEvidenceReport([
+        { localId: 'supp', uri: 's', role: 'supplementary', status: 'accepted', captureLocation },
+      ], 'session-id', 'road')).toBe(false);
+    });
+
+    test('C. one primary + one supplementary → denied for new report submission', () => {
+      const supp: EvidenceItem = {
+        localId: 'supp', uri: 'supp-photo', role: 'supplementary', status: 'accepted',
+        captureLocation: { ...captureLocation, latitude: 2 },
+      };
+      expect(canSubmitEvidenceReport([validPrimary(), supp], 'session-id', 'road')).toBe(false);
+    });
+
+    test('D. two primary items → denied', () => {
+      const second: EvidenceItem = validPrimary({ localId: 'second' });
+      expect(canSubmitEvidenceReport([validPrimary(), second], 'session-id', 'road')).toBe(false);
+    });
+
+    test('E. primary classification mismatch → denied', () => {
+      expect(canSubmitEvidenceReport([validPrimary()], 'session-id', 'fire')).toBe(false);
+    });
+
+    test('F. invalid primary capture location → denied', () => {
+      const badLoc: EvidenceItem = validPrimary({
+        captureLocation: { latitude: 999, longitude: 0, capturedAt: '2026-10-02T00:00:00.000Z' },
+      });
+      expect(canSubmitEvidenceReport([badLoc], 'session-id', 'road')).toBe(false);
+    });
+
+    test('null uploadSessionId → denied', () => {
+      expect(canSubmitEvidenceReport([validPrimary()], null, 'road')).toBe(false);
+    });
+
+    test('null incidentType → denied', () => {
+      expect(canSubmitEvidenceReport([validPrimary()], 'session-id', null)).toBe(false);
+    });
+
+    test('uploading item → denied', () => {
+      const uploading: EvidenceItem = validPrimary({ status: 'uploading' });
+      expect(canSubmitEvidenceReport([uploading], 'session-id', 'road')).toBe(false);
+    });
+
+    test('error item → denied', () => {
+      const errored: EvidenceItem = validPrimary({ status: 'error' });
+      expect(canSubmitEvidenceReport([errored], 'session-id', 'road')).toBe(false);
+    });
   });
 
-  describe('V3.1 supplementary role authoritative capture', () => {
-    // Mirrors the screen: openCamera writes the role synchronously to a ref;
-    // the shutter resolves it once. State may still hold a stale 'primary'.
-    const acceptedPrimary: EvidenceItem = {
-      localId: 'primary',
-      uri: 'primary-photo',
-      role: 'primary',
-      status: 'accepted',
-      classification: {
-        accepted: true, label: 'fire', confidence: 0.9, status: 'valid', action: 'accept', reason: null, caption: null,
-      },
-      captureLocation,
-    };
+  // ─── Historical supplementary parsing remains supported ──────────────────
+
+  describe('historical supplementary parsing compatibility', () => {
+    test('G. parseEvidenceUploadDecision still recognises accepted-supplementary', () => {
+      const decision = parseEvidenceUploadDecision({ accepted: true, evidenceId: 'ev-supp', evidenceRole: 'supplementary' });
+      expect(decision).toEqual({ kind: 'accepted-supplementary', evidenceId: 'ev-supp' });
+    });
+
+    test('resolveCaptureOutcome still resolves accepted-supplementary', () => {
+      const outcome = resolveCaptureOutcome('supplementary', { kind: 'accepted-supplementary', evidenceId: 'ev-supp' });
+      expect(outcome).toEqual({ status: 'accepted', role: 'supplementary' });
+    });
+
+    test('countAcceptedSupplementaryEvidence still counts historical supplementary', () => {
+      const items: EvidenceItem[] = [
+        validPrimary(),
+        { localId: 's1', uri: 's', role: 'supplementary', status: 'accepted', captureLocation },
+      ];
+      expect(countAcceptedSupplementaryEvidence(items)).toBe(1);
+    });
+
+    test('retakeCaptureTransition for supplementary still resolves to supplementary stage', () => {
+      expect(retakeCaptureTransition('supplementary')).toMatchObject({ stage: 'supplementary', showCamera: true });
+    });
+  });
+
+  // ─── Primary retake transition ───────────────────────────────────────────
+
+  test('H. primary retake transition resolves to primary capture', () => {
+    expect(retakeCaptureTransition('primary')).toMatchObject({ stage: 'capture', showCamera: true });
+  });
+
+  test('resolveCaptureRole returns primary for primary', () => {
+    expect(resolveCaptureRole('primary')).toBe('primary');
+  });
+
+  describe('V3.1 supplementary role authoritative capture (historical compatibility)', () => {
 
     test('Add Evidence after accepted primary resolves supplementary role even when state is stale primary', () => {
       const authoritativeRole: { current: import('../utils/evidenceFlow').EvidenceRole } = { current: 'primary' };
-      // Citizen clicks Add Evidence: ref written synchronously.
       authoritativeRole.current = 'supplementary';
-      const staleStateRole = 'primary'; // async state may not have committed
+      const staleStateRole = 'primary';
       const resolved = resolveCaptureRole(authoritativeRole.current);
       expect(resolved).toBe('supplementary');
       expect(resolved).not.toBe(staleStateRole);
@@ -305,7 +366,6 @@ describe('durable citizen evidence flow', () => {
         localId: 'failed-supp', uri: 'supp-photo', role: 'supplementary', status: 'error', captureLocation,
       };
       const authoritativeRole: { current: import('../utils/evidenceFlow').EvidenceRole } = { current: 'primary' };
-      // retakeFailedCapture recovers role from the failed item and writes ref.
       authoritativeRole.current = failedSupplementary.role;
       const transition = retakeCaptureTransition(failedSupplementary.role);
       expect(transition.stage).toBe('supplementary');
