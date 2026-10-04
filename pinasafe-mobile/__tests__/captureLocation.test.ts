@@ -201,5 +201,33 @@ describe('capture-time location contract', () => {
       expect(result.photo.uri).toBe('normal-photo');
       expect(result.captureLocation.latitude).toBe(0);
     });
+
+    test('early takePhoto rejection propagates the original error before timeout', async () => {
+      const cameraError = new Error('Camera hardware failure');
+      const operation = captureWithLocation(
+        () => Promise.reject(cameraError),
+        async () => currentLocation(),
+      );
+      const caught = await operation.catch(e => e);
+      expect(caught).toBe(cameraError);
+      expect(isPhotoCaptureTimeout(caught)).toBe(false);
+    });
+
+    test('late takePhoto rejection after timeout does not cause an unhandled rejection', async () => {
+      jest.useFakeTimers();
+      try {
+        let rejectPhoto!: (error: Error) => void;
+        const takePhoto = () => new Promise<{ uri: string }>((_resolve, reject) => { rejectPhoto = reject; });
+        const operation = captureWithLocation(takePhoto, async () => currentLocation());
+        const assertion = expect(operation).rejects.toThrow(/camera capture took too long/i);
+        await jest.advanceTimersByTimeAsync(CAPTURE_PHOTO_TIMEOUT_MS);
+        await assertion;
+        rejectPhoto(new Error('late camera error'));
+        await jest.advanceTimersByTimeAsync(1000);
+        await expect(operation).rejects.toThrow(/camera capture took too long/i);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 });

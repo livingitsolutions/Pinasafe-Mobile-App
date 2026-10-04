@@ -30,6 +30,10 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
   // Attempt identity prevents a stale (timed-out) capture's late-resolving
   // promise from reaching onCapture after a newer attempt has begun.
   const attemptRef = useRef(0);
+  // Tracks the generation that onCameraReady must match before enabling the
+  // shutter. Updated synchronously when cameraGeneration changes so a late
+  // callback from an obsolete CameraView can never enable the current one.
+  const readyGenerationRef = useRef(0);
 
   useEffect(() => {
     void (async () => {
@@ -75,7 +79,10 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
       if (attemptRef.current !== attemptId) return;
       if (isPhotoCaptureTimeout(captureError)) {
         setCameraReady(false);
-        setCameraGeneration(gen => gen + 1);
+        setCameraGeneration(gen => {
+          readyGenerationRef.current = gen + 1;
+          return gen + 1;
+        });
         Alert.alert(
           'Camera restarted',
           'Camera capture took too long. The camera has been restarted. Please try again.',
@@ -122,7 +129,11 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         ref={cameraRef}
         style={{ flex: 1 }}
         facing={facing}
-        onCameraReady={() => setCameraReady(true)}
+        onCameraReady={() => {
+          if (readyGenerationRef.current === cameraGeneration) {
+            setCameraReady(true);
+          }
+        }}
       />
 
       <View

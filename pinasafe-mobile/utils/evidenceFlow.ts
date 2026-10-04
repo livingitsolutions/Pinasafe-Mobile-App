@@ -222,13 +222,28 @@ export const isPhotoCaptureTimeout = (error: unknown): boolean =>
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, error: string | Error): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(typeof error === 'string' ? new Error(error) : error), ms);
+    timer = setTimeout(() => {
+      settled = true;
+      reject(typeof error === 'string' ? new Error(error) : error);
+    }, ms);
   });
-  // Attach a no-op catch to the underlying promise so a late rejection after the
-  // timeout fires does not surface as an unhandled promise rejection.
-  const guarded = Promise.resolve(promise).catch(() => undefined as unknown as T);
-  return Promise.race([guarded, timeout]).finally(() => {
+  // Wrap the underlying promise so that:
+  //  - early resolution wins the race with the original value
+  //  - early rejection wins the race with the original error
+  //  - late rejection AFTER timeout is swallowed (no unhandled rejection)
+  const wrapped = new Promise<T>((resolve, reject) => {
+    Promise.resolve(promise).then(
+      value => {
+        if (!settled) { settled = true; resolve(value); }
+      },
+      reason => {
+        if (!settled) { settled = true; reject(reason); }
+      },
+    );
+  });
+  return Promise.race([wrapped, timeout]).finally(() => {
     if (timer !== undefined) clearTimeout(timer);
   });
 };
