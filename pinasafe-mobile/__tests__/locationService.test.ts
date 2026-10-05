@@ -1,10 +1,9 @@
-import { locationService, LocationData } from '../hooks/locationService';
+import { locationService } from '../hooks/locationService';
+import { Platform } from 'react-native';
+
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 
 jest.mock('expo-location', () => {
-  const mockLocation = {
-    coords: { latitude: 10.5, longitude: 124.9, accuracy: 5 },
-    timestamp: 1700000000000,
-  };
   return {
     requestForegroundPermissionsAsync: jest.fn(),
     getCurrentPositionAsync: jest.fn(),
@@ -19,9 +18,11 @@ jest.mock('expo-location', () => {
 describe('locationService — no fallback coordinates', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    Platform.OS = 'ios';
   });
 
-  test('returns actual coordinates on success', async () => {
+  test.each(['ios', 'android'] as const)('returns actual coordinates with unchanged Expo options on %s', async platform => {
+    Platform.OS = platform;
     const Location = require('expo-location');
     Location.requestForegroundPermissionsAsync.mockResolvedValue({ status: 'granted', canAskAgain: true });
     Location.getCurrentPositionAsync.mockResolvedValue({
@@ -35,6 +36,12 @@ describe('locationService — no fallback coordinates', () => {
     expect(result!.coords.latitude).toBe(10.5);
     expect(result!.coords.longitude).toBe(124.9);
     expect(result!.coords.accuracy).toBe(5);
+    expect(Location.getCurrentPositionAsync).toHaveBeenCalledTimes(1);
+    expect(Location.getCurrentPositionAsync).toHaveBeenCalledWith({
+      accuracy: Location.Accuracy.High,
+      timeInterval: 5000,
+      distanceInterval: 10,
+    });
   });
 
   test('returns null on permission denied', async () => {
