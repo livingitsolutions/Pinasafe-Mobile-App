@@ -1,9 +1,40 @@
 const { getClient } = require('../config/database');
 const safeLogger = require('../utils/safeLogger');
+const DECIMAL_NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+const REPORT_STATUSES = new Set(['pending', 'dispatched', 'responding', 'resolved']);
+const STATUS_ORDER = { pending: 0, dispatched: 1, responding: 2 };
+const PRIORITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3 };
 
 class IncidentClusteringService {
   constructor() {
     this.CLUSTER_RADIUS_METERS = 500;
+  }
+
+  normalizeCoordinate(value, minimum, maximum) {
+    let coordinate;
+
+    if (typeof value === 'number') {
+      coordinate = value;
+    } else if (typeof value === 'string') {
+      const trimmedValue = value.trim();
+      if (!trimmedValue || !DECIMAL_NUMBER_PATTERN.test(trimmedValue)) return null;
+      coordinate = Number(trimmedValue);
+    } else {
+      return null;
+    }
+
+    return Number.isFinite(coordinate) && coordinate >= minimum && coordinate <= maximum
+      ? coordinate
+      : null;
+  }
+
+  getCoordinates(incident) {
+    const latitude = this.normalizeCoordinate(incident.latitude, -90, 90);
+    const longitude = this.normalizeCoordinate(incident.longitude, -180, 180);
+
+    return latitude !== null && longitude !== null
+      ? { latitude, longitude }
+      : null;
   }
 
   toRadians(degrees) {
@@ -69,13 +100,19 @@ class IncidentClusteringService {
       .gte('created_at', todayStart.toISOString())
       .lte('created_at', todayEnd.toISOString())
       .neq('id', newIncident.id)
+      .neq('status', 'resolved')
       .not('cluster_id', 'is', null);
 
-    if (error || !existingIncidents || existingIncidents.length === 0) {
+    if (error) {
+      safeLogger.error('clustering.candidates_fetch_failed');
+      throw error;
+    }
+
+    if (!existingIncidents || existingIncidents.length === 0) {
       return null;
     }
 
-    for (const incident of existingIncidents) {
+    for (const incident of existingIncidents.filter((item) => item.status !== 'resolved')) {
       if (this.shouldCluster(newIncident, incident)) {
         return incident.cluster_id;
       }
@@ -255,9 +292,88 @@ class IncidentClusteringService {
       throw updatesError;
     }
 
+    const legacyIncidents = incidents || [];
+    const memberReports = [...legacyIncidents].sort((left, right) => {
+      const createdAtOrder = String(left.created_at).localeCompare(String(right.created_at));
+      return createdAtOrder || String(left.id).localeCompare(String(right.id));
+    });
+    const anchor = memberReports.find((incident) => incident.id === clusterId);
+    const representative = anchor || memberReports[0];
+    const canonicalIncident = (anchor && this.getCoordinates(anchor) ? anchor : null)
+      || memberReports.find((incident) => this.getCoordinates(incident))
+      || representative;
+    // Unknown lifecycle values count as pending; any active member keeps the cluster active.
+    const effectiveStatuses = memberReports.map((incident) => (
+      REPORT_STATUSES.has(incident.status) ? incident.status : 'pending'
+    ));
+    const activeStatuses = effectiveStatuses.filter((status) => status !== 'resolved');
+    const operationalStatus = memberReports.length > 0
+      && effectiveStatuses.every((status) => status === 'resolved')
+      ? 'resolved'
+      : activeStatuses.reduce((highest, status) => (
+        STATUS_ORDER[status] > STATUS_ORDER[highest] ? status : highest
+      ), 'pending');
+    const priorities = memberReports
+      .map((incident) => incident.priority)
+      .filter((priority) => Object.hasOwn(PRIORITY_ORDER, priority));
+    const priority = priorities.reduce((highest, current) => (
+      PRIORITY_ORDER[current] > (PRIORITY_ORDER[highest] ?? -1) ? current : highest
+    ), null);
+    const reportTimes = memberReports
+      .map((incident) => incident.created_at)
+      .filter((createdAt) => createdAt && Number.isFinite(Date.parse(createdAt)))
+      .map((createdAt) => ({ value: createdAt, time: Date.parse(createdAt) }))
+      .sort((left, right) => left.time - right.time);
+    const distinctReporterCount = new Set(
+      memberReports.map((incident) => incident.reported_by).filter(Boolean)
+    ).size;
+    const canonicalCoordinates = canonicalIncident
+      ? this.getCoordinates(canonicalIncident)
+      : null;
+    const operationalMemberReports = memberReports.map((incident) => ({
+      id: incident.id,
+      organization_id: incident.organization_id,
+      assigned_team_id: incident.assigned_team_id,
+      type: incident.type,
+      description: incident.description,
+      latitude: incident.latitude,
+      longitude: incident.longitude,
+      priority: incident.priority,
+      status: incident.status,
+      created_at: incident.created_at,
+      coordinates: this.getCoordinates(incident)
+    }));
+    const usableLocation = (location) => (
+      typeof location === 'string'
+      && location.trim().length > 0
+      && location.trim().toLowerCase() !== 'unknown location'
+    );
+    const representativeLocation = usableLocation(anchor?.location)
+      ? anchor.location
+      : memberReports.find((incident) => usableLocation(incident.location))?.location || null;
+
     return {
-      incidents,
-      totalReports: incidents.length,
+      clusterId,
+      type: representative?.type || null,
+      status: operationalStatus,
+      location: representativeLocation,
+      latitude: canonicalCoordinates?.latitude ?? null,
+      longitude: canonicalCoordinates?.longitude ?? null,
+      coordinates: canonicalCoordinates,
+      firstReportedAt: reportTimes[0]?.value || null,
+      latestReportedAt: reportTimes[reportTimes.length - 1]?.value || null,
+      reportCount: memberReports.length,
+      distinctReporterCount,
+      priority,
+      assignedTeams: [...new Map(
+        memberReports
+          .map((incident) => incident.assigned_team_id)
+          .filter(Boolean)
+          .map((teamId) => [teamId, { id: teamId }])
+      ).values()],
+      memberReports: operationalMemberReports,
+      incidents: legacyIncidents,
+      totalReports: memberReports.length,
       subscribers: subscribers.length,
       updates: updates || []
     };
