@@ -37,6 +37,37 @@ const BINDING_ERROR_RESPONSES = {
   REPORT_ID_CONFLICT: [409, 'Emergency report conflicts with evidence session']
 };
 const REPORT_FETCH_ATTEMPTS = 3;
+const DECIMAL_NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+const normalizeCoordinate = (value, minimum, maximum) => {
+  let coordinate;
+
+  if (typeof value === 'number') {
+    coordinate = value;
+  } else if (typeof value === 'string') {
+    const trimmedValue = value.trim();
+    if (!trimmedValue || !DECIMAL_NUMBER_PATTERN.test(trimmedValue)) return null;
+    coordinate = Number(trimmedValue);
+  } else {
+    return null;
+  }
+
+  return Number.isFinite(coordinate) && coordinate >= minimum && coordinate <= maximum
+    ? coordinate
+    : null;
+};
+
+const formatEmergencyReport = (report) => {
+  const latitude = normalizeCoordinate(report.latitude, -90, 90);
+  const longitude = normalizeCoordinate(report.longitude, -180, 180);
+
+  return {
+    ...report,
+    coordinates: latitude !== null && longitude !== null
+      ? { latitude, longitude }
+      : null
+  };
+};
 
 const fetchPersistedReport = async (reportId) => {
   for (let attempt = 0; attempt < REPORT_FETCH_ATTEMPTS; attempt += 1) {
@@ -160,7 +191,7 @@ router.get('/', authenticateToken, validatePagination, async (req, res) => {
       filteredReports = filteredReports.filter(r => r.priority === priority);
     }
 
-    const formattedReports = filteredReports.map(report => ({
+    const formattedReports = filteredReports.map(report => formatEmergencyReport({
       ...report,
       reporter_name: report.reporter?.name,
       reporter_phone: report.reporter?.phone,
@@ -256,7 +287,7 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
 
     res.status(201).json({
       message: 'Emergency report created successfully',
-      data: report
+      data: formatEmergencyReport(report)
     });
 
   } catch (error) {
@@ -381,7 +412,7 @@ router.put('/:id', authenticateToken, requireRole(['responder']), validateUUID('
 
     res.json({
       message: 'Emergency report updated successfully',
-      data: updatedReport
+      data: formatEmergencyReport(updatedReport)
     });
 
   } catch (error) {
@@ -473,7 +504,7 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin']), valid
 
     res.json({
       message: 'Team assigned successfully',
-      data: updatedReport
+      data: formatEmergencyReport(updatedReport)
     });
 
   } catch (error) {
@@ -517,14 +548,14 @@ router.get('/:id', authenticateToken, validateUUID('id'), async (req, res) => {
       }
     }
 
-    const formattedReport = {
+    const formattedReport = formatEmergencyReport({
       ...report,
       reporter_name: report.reporter?.name,
       reporter_phone: report.reporter?.phone,
       responder_name: report.responder?.name,
       reporter: undefined,
       responder: undefined
-    };
+    });
 
     res.json({ data: formattedReport });
 

@@ -10,8 +10,28 @@ import { colors, radius, space, type } from '@/theme/tokens';
 type Report = {
   id: string; type: string; description: string; location: string; priority: string; status: 'pending' | 'dispatched' | 'responding' | 'resolved';
   created_at?: string; updated_at?: string; resolved_at?: string; assigned_team?: { id: string; name: string }; assigned_team_id?: string;
-  coordinates?: { latitude: number; longitude: number }; reporter_name?: string; reporter_phone?: string;
+  coordinates: { latitude: number; longitude: number } | null; reporter_name?: string; reporter_phone?: string;
 };
+
+export function getEmergencyReportMapUrl(coordinates: unknown): string | null {
+  if (!coordinates || typeof coordinates !== 'object' || Array.isArray(coordinates)) return null;
+
+  const { latitude, longitude } = coordinates as { latitude?: unknown; longitude?: unknown };
+  if (
+    typeof latitude !== 'number'
+    || typeof longitude !== 'number'
+    || !Number.isFinite(latitude)
+    || !Number.isFinite(longitude)
+    || latitude < -90
+    || latitude > 90
+    || longitude < -180
+    || longitude > 180
+  ) {
+    return null;
+  }
+
+  return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=17/${latitude}/${longitude}`;
+}
 
 export default function IncidentDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -39,6 +59,7 @@ export default function IncidentDetail() {
 
   useEffect(() => { load(); }, [load]);
   const nextStatus = useMemo(() => report?.status === 'dispatched' ? 'responding' : report?.status === 'responding' ? 'resolved' : null, [report?.status]);
+  const mapUrl = report ? getEmergencyReportMapUrl(report.coordinates) : null;
 
   const advance = async () => {
     if (!report || !nextStatus || actionLoading) return;
@@ -65,7 +86,7 @@ export default function IncidentDetail() {
       <Text style={styles.description}>{report.description}</Text>
       <View style={styles.location}><MapPin size={20} color={colors.brand} /><Text style={styles.locationText}>{report.location}</Text></View>
       <View style={styles.details}><DetailItem label="Reported" value={report.created_at ? new Date(report.created_at).toLocaleString() : undefined} /><DetailItem label="Assigned team" value={report.assigned_team?.name} /><DetailItem label="Last updated" value={report.updated_at ? new Date(report.updated_at).toLocaleString() : undefined} /></View>
-      {report.coordinates ? <Button variant="secondary" label="Open location in maps" onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${report.coordinates?.latitude}&mlon=${report.coordinates?.longitude}#map=17/${report.coordinates?.latitude}/${report.coordinates?.longitude}`)} icon={<MapPin size={18} color={colors.ink} />} /> : <Banner title="Coordinates unavailable" message="No map location was submitted with this incident." tone="warning" />}
+      {mapUrl ? <Button variant="secondary" label="Open location in maps" onPress={() => Linking.openURL(mapUrl)} icon={<MapPin size={18} color={colors.ink} />} /> : <Banner title="Map coordinates unavailable" message="Map coordinates are unavailable for this incident." tone="info" />}
     </Card>
     <Section title="Evidence" description="Private evidence links expire after five minutes." action={<IconButton label="Refresh evidence" onPress={load}><RefreshCw size={18} color={colors.ink} /></IconButton>}>
       {evidenceError ? <ErrorState message={evidenceError} onRetry={load} /> : evidence.length === 0 ? <EmptyState title="No evidence available" message="No accepted evidence is attached to this report." /> : <View style={styles.evidenceGrid}>{evidence.map(item => <Card key={item.id} style={styles.evidenceCard}><Image accessibilityLabel={`${item.evidenceRole === 'supplementary' ? 'Supplementary' : 'Accepted'} incident evidence`} source={{ uri: item.url }} resizeMode="cover" style={styles.image} /><View style={styles.evidenceMeta}><ShieldCheck size={18} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.evidenceTitle}>{item.evidenceRole === 'supplementary' ? 'Supplementary evidence' : item.classification ? `Server-verified ${item.classification.label}` : 'Accepted incident evidence'}</Text><Text style={styles.caption}>{item.classification ? (item.classification.confidence == null ? 'Classification accepted' : `${Math.round(item.classification.confidence * 100)}% confidence`) : 'Not classified'} · {item.width}×{item.height}</Text></View></View></Card>)}</View>}
