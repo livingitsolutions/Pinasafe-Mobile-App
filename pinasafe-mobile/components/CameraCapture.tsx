@@ -6,9 +6,11 @@ import { Camera as CameraIcon, RotateCcw, X } from 'lucide-react-native';
 import { locationService } from '@/hooks/locationService';
 import {
   captureWithLocation,
+  CaptureFailureBoundary,
   CaptureLocation,
   getShutterState,
   isPhotoCaptureTimeout,
+  validatePhotoCaptureResult,
 } from '@/utils/evidenceFlow';
 
 interface CameraCaptureProps {
@@ -52,10 +54,11 @@ type CameraDiagnosticState = {
   manipulationInvoked: boolean;
   manipulationReturned: boolean;
   callbackInvoked: boolean;
+  failureBoundary: CaptureFailureBoundary;
   lastEvent: DiagnosticEvent;
 };
 
-function createCameraDiagnostics(permission: boolean) {
+export function createCameraDiagnostics(permission: boolean) {
   let snapshot: CameraDiagnosticState = {
     generation: 0, readyGeneration: 0, attempt: 0,
     permission, refAttached: false, ready: false, processing: false,
@@ -64,12 +67,25 @@ function createCameraDiagnostics(permission: boolean) {
     controlsTouch: false, pressIn: false, press: false, handlerEntered: false,
     captureInvoked: false, photoReturned: false, locationReturned: false,
     manipulationInvoked: false, manipulationReturned: false, callbackInvoked: false,
+    failureBoundary: 'none',
     lastEvent: 'mounted',
   };
   const listeners = new Set<() => void>();
-  const update = (changes: Partial<CameraDiagnosticState>) => {
+  const publicationFailed = (boundary?: CaptureFailureBoundary) => {
+    if (boundary) snapshot = { ...snapshot, failureBoundary: boundary };
+  };
+  const notify = (boundary?: CaptureFailureBoundary) => {
+    listeners.forEach(listener => {
+      try {
+        listener();
+      } catch {
+        publicationFailed(boundary);
+      }
+    });
+  };
+  const update = (changes: Partial<CameraDiagnosticState>, boundary?: CaptureFailureBoundary) => {
     snapshot = { ...snapshot, ...changes };
-    listeners.forEach(listener => listener());
+    notify(boundary);
   };
   return {
     getSnapshot: () => snapshot,
@@ -79,8 +95,19 @@ function createCameraDiagnostics(permission: boolean) {
     },
     update,
     record: (event: DiagnosticEvent, changes: Partial<CameraDiagnosticState> = {}) => {
-      update({ ...changes, lastEvent: event });
-      if (CAMERA_DIAGNOSTICS_ENABLED) console.info('Camera diagnostics', snapshot);
+      const boundary: CaptureFailureBoundary | undefined = event === 'capture-returned'
+        ? 'photo-return-diagnostic-error'
+        : event === 'location-returned' ? 'location-return-diagnostic-error'
+          : event === 'manipulation-invoked' ? 'manipulation-marker-diagnostic-error' : undefined;
+      update({ ...changes, lastEvent: event }, boundary);
+      if (CAMERA_DIAGNOSTICS_ENABLED) {
+        try {
+          console.info('Camera diagnostics', snapshot);
+        } catch {
+          publicationFailed(boundary);
+          notify();
+        }
+      }
     },
   };
 }
@@ -102,6 +129,7 @@ function CameraDiagnosticPanel({ diagnostics }: { diagnostics: ReturnType<typeof
         photo returned: {yesNo(state.photoReturned)} · location returned: {yesNo(state.locationReturned)}{'\n'}
         manipulation invoked: {yesNo(state.manipulationInvoked)} · returned: {yesNo(state.manipulationReturned)}{'\n'}
         callback invoked: {yesNo(state.callbackInvoked)}{'\n'}
+        failure boundary: {state.failureBoundary}{'\n'}
         last event: {state.lastEvent}
       </Text>
     </View>
@@ -188,16 +216,25 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
     }
 
     const attemptId = ++attemptRef.current;
+    let failureBoundary: CaptureFailureBoundary = 'none';
+    const recordFailureBoundary = (boundary: CaptureFailureBoundary) => {
+      failureBoundary = boundary;
+    };
     const recordAttempt = (event: DiagnosticEvent, changes: Partial<CameraDiagnosticState> = {}) => {
       if (attemptRef.current === attemptId) {
         diagnostics.record(event, changes);
       } else if (CAMERA_DIAGNOSTICS_ENABLED) {
-        console.info('Camera diagnostics', { lastEvent: 'attempt-obsolete', generation: cameraGeneration, attempt: attemptId });
+        try {
+          console.info('Camera diagnostics', { lastEvent: 'attempt-obsolete', generation: cameraGeneration, attempt: attemptId });
+        } catch {
+          return;
+        }
       }
     };
     try {
       setIsProcessing(true);
       recordAttempt('processing', {
+        failureBoundary: 'none',
         attempt: attemptId, captureInvoked: false, photoReturned: false, locationReturned: false,
         manipulationInvoked: false, manipulationReturned: false, callbackInvoked: false,
       });
@@ -217,12 +254,13 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
             return location;
           });
         },
+        recordFailureBoundary,
       );
       if (attemptRef.current !== attemptId) {
         recordAttempt('attempt-obsolete');
         return;
       }
-      if (!rawPhoto?.uri) throw new Error('Failed to capture image.');
+      validatePhotoCaptureResult(rawPhoto, recordFailureBoundary);
 
       recordAttempt('manipulation-invoked', { manipulationInvoked: true });
       const normalizedPhoto = await ImageManipulator.manipulateAsync(
@@ -237,14 +275,14 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
       }
       recordAttempt('callback-invoked', { callbackInvoked: true });
       await onCapture(normalizedPhoto.uri, captureLocation);
-      recordAttempt('capture-complete');
+      recordAttempt('capture-complete', { failureBoundary: 'none' });
     } catch (captureError) {
       if (attemptRef.current !== attemptId) {
         recordAttempt('attempt-obsolete');
         return;
       }
       if (isPhotoCaptureTimeout(captureError)) {
-        recordAttempt('photo-timeout');
+        recordAttempt('photo-timeout', { failureBoundary: 'photo-timeout' });
         setCameraReady(false);
         setCameraGeneration(gen => {
           readyGenerationRef.current = gen + 1;
@@ -257,7 +295,9 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         );
         return;
       }
-      recordAttempt('capture-error');
+      recordAttempt('capture-error', {
+        failureBoundary: failureBoundary === 'none' ? 'post-capture-unexpected' : failureBoundary,
+      });
       const message = captureError instanceof Error && /location/i.test(captureError.message)
         ? 'Location could not be captured. Check location access and try the photo again.'
         : 'A photo and current location are required. Check camera and location permissions, then try again.';
