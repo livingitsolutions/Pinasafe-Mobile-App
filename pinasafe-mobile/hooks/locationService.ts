@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import { Platform } from 'react-native';
 
 export interface LocationCoords {
   latitude: number;
@@ -52,11 +53,18 @@ class LocationService {
         throw new Error('Location permission not granted');
       }
 
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-        timeInterval: 5000,
-        distanceInterval: 10,
-      });
+      const location = Platform.OS === 'web'
+        ? await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            maximumAge: 0,
+            enableHighAccuracy: true,
+          });
+        })
+        : await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        });
 
       const locationData: LocationData = {
         coords: {

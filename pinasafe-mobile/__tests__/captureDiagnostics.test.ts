@@ -1,13 +1,17 @@
 import React, { useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as Location from 'expo-location';
 import CameraCapture, { createCameraDiagnostics } from '../components/CameraCapture';
 import { locationService, LocationData } from '../hooks/locationService';
 import {
   CAPTURE_LOCATION_TIMEOUT_MS,
   CAPTURE_PHOTO_TIMEOUT_MS,
   CaptureFailureBoundary,
+  CaptureLocation,
   captureWithLocation,
+  parseEvidenceUploadDecision,
+  retakeCaptureTransition,
   validatePhotoCaptureResult,
 } from '../utils/evidenceFlow';
 
@@ -24,6 +28,13 @@ jest.mock('react-native', () => ({
   Text: 'Text',
   TouchableOpacity: 'TouchableOpacity',
   View: 'View',
+  Platform: { OS: 'web' },
+}));
+jest.mock('expo-location', () => ({
+  requestForegroundPermissionsAsync: jest.fn(),
+  getCurrentPositionAsync: jest.fn(),
+  reverseGeocodeAsync: jest.fn(),
+  PermissionStatus: { GRANTED: 'granted', DENIED: 'denied' },
 }));
 jest.mock('expo-camera', () => ({
   CameraView: 'CameraView',
@@ -70,10 +81,12 @@ function findShutterOrNull(node: React.ReactNode): (() => Promise<void>) | null 
   return null;
 }
 
-function mountReadyCapture(diagnostics = createCameraDiagnostics(true)) {
+function mountReadyCapture(
+  diagnostics = createCameraDiagnostics(true),
+  onCapture = jest.fn().mockResolvedValue(undefined),
+) {
   const camera = { takePictureAsync: jest.fn().mockResolvedValue(photo) };
   const attempt = { current: 0 };
-  const onCapture = jest.fn().mockResolvedValue(undefined);
   const stateValues = ['back', false, true, 0, diagnostics];
   const refs = [{ current: camera }, attempt, { current: 0 }];
   (useState as jest.Mock).mockImplementation(() => [stateValues.shift(), jest.fn()]);
@@ -81,6 +94,214 @@ function mountReadyCapture(diagnostics = createCameraDiagnostics(true)) {
   const tree = CameraCapture({ onCapture, onCancel: jest.fn() });
   return { diagnostics, camera, attempt, onCapture, press: findShutter(tree) };
 }
+
+describe('V3.3B fresh browser acquisition through the real location service', () => {
+  const realService = jest.requireActual<typeof import('../hooks/locationService')>('../hooks/locationService').locationService;
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const getCurrentPosition = jest.fn<void, [PositionCallback, PositionErrorCallback | null | undefined, PositionOptions | undefined]>();
+  const position = (timestamp = now, latitude = 0, longitude = 1, accuracy = 5): GeolocationPosition => ({
+    coords: { latitude, longitude, accuracy, altitude: null, altitudeAccuracy: null, heading: null, speed: null, toJSON: jest.fn() },
+    timestamp,
+    toJSON: jest.fn(),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    jest.spyOn(console, 'info').mockImplementation(() => {});
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { geolocation: { getCurrentPosition } },
+    });
+    getCurrentPosition.mockReset();
+    getCurrentPosition.mockImplementation(resolve => resolve(position()));
+    jest.mocked(Location.requestForegroundPermissionsAsync).mockResolvedValue({
+      status: Location.PermissionStatus.GRANTED, granted: true, canAskAgain: true, expires: 'never',
+    });
+    jest.mocked(Location.reverseGeocodeAsync).mockResolvedValue([]);
+    jest.mocked(locationService.getCurrentLocation).mockImplementation(() => realService.getCurrentLocation());
+    jest.mocked(ImageManipulator.manipulateAsync).mockResolvedValue({ uri: 'synthetic-normalized', width: 500, height: 500 });
+  });
+
+  afterEach(() => {
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
+    else Reflect.deleteProperty(globalThis, 'navigator');
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  test('initial capture requests a new high-accuracy browser observation', async () => {
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+    expect(getCurrentPosition).toHaveBeenCalledWith(expect.any(Function), expect.any(Function), {
+      maximumAge: 0, enableHighAccuracy: true,
+    });
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+    expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(capture.onCapture).toHaveBeenCalledTimes(1);
+    expect(capture.diagnostics.getSnapshot()).toMatchObject({ failureBoundary: 'none', lastEvent: 'capture-complete' });
+  });
+
+  test('No Incident then Retake obtains fresh second coordinates and invokes each upload/classification handoff once', async () => {
+    const uploadAndClassify = jest.fn()
+      .mockResolvedValueOnce({
+        accepted: false, evidenceRole: 'primary',
+        classification: { label: 'other', confidence: 0.9, status: 'valid', action: 'reject', reason: 'No Incident', caption: null },
+      })
+      .mockResolvedValueOnce({
+        accepted: true, evidenceRole: 'primary', evidenceId: 'synthetic-second-evidence',
+        classification: { label: 'fire', confidence: 0.9, status: 'valid', action: 'accept', reason: null, caption: null },
+      });
+    const decisions: ReturnType<typeof parseEvidenceUploadDecision>[] = [];
+    const onCapture = jest.fn(async (uri: string, captureLocation: CaptureLocation) => {
+      decisions.push(parseEvidenceUploadDecision(await uploadAndClassify(uri, captureLocation)));
+    });
+    let browserCache = position();
+    let observation = browserCache;
+    getCurrentPosition.mockImplementation((resolve, _reject, options) => {
+      const result = options?.maximumAge === 0 ? observation : browserCache;
+      browserCache = result;
+      resolve(result);
+    });
+    const first = mountReadyCapture(createCameraDiagnostics(true), onCapture);
+    await first.press();
+    expect(decisions[0].kind).toBe('rejected-primary');
+    expect(first.onCapture).toHaveBeenCalledTimes(1);
+    expect(ImageManipulator.manipulateAsync).toHaveBeenCalledTimes(1);
+    expect(uploadAndClassify).toHaveBeenCalledTimes(1);
+    expect(retakeCaptureTransition('primary')).toMatchObject({ stage: 'capture', showCamera: true });
+
+    jest.mocked(Date.now).mockReturnValue(now + 6000);
+    observation = position(now + 6000, 7, 8, 3);
+    const retakeCallback = jest.fn(onCapture);
+    const second = mountReadyCapture(createCameraDiagnostics(true), retakeCallback);
+    await second.press();
+    expect(second.camera.takePictureAsync).toHaveBeenCalledTimes(1);
+    expect(retakeCallback).toHaveBeenCalledTimes(1);
+    expect(onCapture).toHaveBeenCalledTimes(2);
+    expect(ImageManipulator.manipulateAsync).toHaveBeenCalledTimes(2);
+    expect(uploadAndClassify).toHaveBeenCalledTimes(2);
+    expect(decisions[1].kind).toBe('accepted-primary');
+    expect(uploadAndClassify.mock.calls[1][1]).toMatchObject({
+      latitude: 7, longitude: 8, accuracy: 3, capturedAt: new Date(now + 6000).toISOString(),
+    });
+    expect(uploadAndClassify.mock.calls[0][1]).toMatchObject({ latitude: 0, longitude: 1 });
+    expect(getCurrentPosition).toHaveBeenCalledTimes(2);
+    for (const call of getCurrentPosition.mock.calls) expect(call[2]).toEqual({ maximumAge: 0, enableHighAccuracy: true });
+    expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalledTimes(2);
+    expect(second.diagnostics.getSnapshot()).toMatchObject({
+      failureBoundary: 'none', lastEvent: 'capture-complete', manipulationInvoked: true, callbackInvoked: true,
+    });
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  test.each<[number, CaptureFailureBoundary]>([
+    [now - 5001, 'location-stale'],
+    [now + 1001, 'location-future'],
+    [NaN, 'location-time-invalid'],
+    [Infinity, 'location-time-invalid'],
+    [8.64e15 + 1, 'location-future'],
+  ])('deliberately invalid browser timestamp %s still fails closed as %s', async (timestamp, boundary) => {
+    getCurrentPosition.mockImplementation(resolve => resolve(position(timestamp)));
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(getCurrentPosition.mock.calls[0][2]?.maximumAge).toBe(0);
+    expect(capture.diagnostics.getSnapshot()).toMatchObject({ failureBoundary: boundary, lastEvent: 'capture-error' });
+    expect(ImageManipulator.manipulateAsync).not.toHaveBeenCalled();
+    expect(capture.onCapture).not.toHaveBeenCalled();
+  });
+
+  test.each([now - 5000, now + 1000])('exact existing freshness boundary %s remains accepted', async timestamp => {
+    getCurrentPosition.mockImplementation(resolve => resolve(position(timestamp)));
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(capture.onCapture).toHaveBeenCalledTimes(1);
+    expect(capture.onCapture.mock.calls[0][1].capturedAt).toBe(new Date(timestamp).toISOString());
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('none');
+  });
+
+  test.each([
+    [91, 1, 5], [-91, 1, 5], [0, 181, 5], [0, -181, 5],
+    [NaN, 1, 5], [0, Infinity, 5], [0, 1, -1], [0, 1, NaN], [0, 1, Infinity],
+  ])('coordinate/accuracy validation still rejects %s, %s, %s', async (latitude, longitude, accuracy) => {
+    getCurrentPosition.mockImplementation(resolve => resolve(position(now, latitude, longitude, accuracy)));
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('location-contract-invalid');
+    expect(ImageManipulator.manipulateAsync).not.toHaveBeenCalled();
+    expect(capture.onCapture).not.toHaveBeenCalled();
+  });
+
+  test.each([[-90, -180, 0], [90, 180, 0]])('coordinate/accuracy boundary %s, %s, %s remains accepted', async (latitude, longitude, accuracy) => {
+    getCurrentPosition.mockImplementation(resolve => resolve(position(now, latitude, longitude, accuracy)));
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(capture.onCapture).toHaveBeenCalledTimes(1);
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('none');
+  });
+
+  test('failed fresh acquisition never substitutes the previous successful observation', async () => {
+    await mountReadyCapture().press();
+    expect(realService.getLastKnownLocation()).not.toBeNull();
+    jest.mocked(ImageManipulator.manipulateAsync).mockClear();
+    getCurrentPosition.mockImplementation((_resolve, reject) => reject?.({
+      code: 2, message: 'synthetic-position-unavailable', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3,
+    }));
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(2);
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('location-unavailable');
+    expect(ImageManipulator.manipulateAsync).not.toHaveBeenCalled();
+    expect(capture.onCapture).not.toHaveBeenCalled();
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+  });
+
+  test('permission denial remains fail-closed before browser acquisition', async () => {
+    jest.mocked(Location.requestForegroundPermissionsAsync).mockResolvedValue({
+      status: Location.PermissionStatus.DENIED, granted: false, canAskAgain: false, expires: 'never',
+    });
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(getCurrentPosition).not.toHaveBeenCalled();
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('location-unavailable');
+    expect(capture.onCapture).not.toHaveBeenCalled();
+  });
+
+  test('missing browser geolocation fails closed without falling back to Expo or prior coordinates', async () => {
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
+    const capture = mountReadyCapture();
+    await capture.press();
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('location-unavailable');
+    expect(capture.onCapture).not.toHaveBeenCalled();
+    expect(Location.getCurrentPositionAsync).not.toHaveBeenCalled();
+  });
+
+  test.each(['browser observation', 'reverse geocode'])('existing 12-second overall timeout covers pending %s and ignores late completion', async operation => {
+    jest.useFakeTimers();
+    let finish: () => void;
+    if (operation === 'browser observation') {
+      getCurrentPosition.mockImplementation(resolve => { finish = () => resolve(position()); });
+    } else {
+      jest.mocked(Location.reverseGeocodeAsync).mockReturnValue(new Promise(resolve => { finish = () => resolve([]); }));
+    }
+    const capture = mountReadyCapture();
+    const pending = capture.press();
+    expect(CAPTURE_LOCATION_TIMEOUT_MS).toBe(12000);
+    await jest.advanceTimersByTimeAsync(CAPTURE_LOCATION_TIMEOUT_MS - 1);
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('none');
+    expect(capture.onCapture).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('location-timeout');
+    finish!();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(capture.diagnostics.getSnapshot().failureBoundary).toBe('location-timeout');
+    expect(ImageManipulator.manipulateAsync).not.toHaveBeenCalled();
+    expect(capture.onCapture).not.toHaveBeenCalled();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('V3.3A.1 fixed capture failure boundaries', () => {
   beforeEach(() => {
