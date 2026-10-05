@@ -167,7 +167,7 @@ describe('POST /api/emergency-reports B4 integration', () => {
     expect(response.status).toBe(201);
     expect(response.body).toEqual({
       message: 'Emergency report created successfully',
-      data: { ...report, cluster_id: 'cluster-1' }
+      data: { ...report, cluster_id: 'cluster-1', coordinates: { latitude: 10.1, longitude: 124.8 } }
     });
     expect(createEmergencyReportWithEvidence).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -259,7 +259,7 @@ describe('POST /api/emergency-reports B4 integration', () => {
     expect(response.status).toBe(201);
     expect(response.body).toEqual({
       message: 'Emergency report created successfully',
-      data: report
+      data: { ...report, coordinates: { latitude: 10.1, longitude: 124.8 } }
     });
     expect(clusteringService.findMatchingCluster).not.toHaveBeenCalled();
     expect(clusteringService.createCluster).not.toHaveBeenCalled();
