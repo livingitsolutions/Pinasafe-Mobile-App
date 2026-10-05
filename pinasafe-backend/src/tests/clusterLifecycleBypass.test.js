@@ -34,6 +34,7 @@ const buildQuery = (payload) => ({
   select: jest.fn().mockReturnThis(),
   eq: jest.fn().mockReturnThis(),
   update: jest.fn().mockReturnThis(),
+  maybeSingle: jest.fn().mockResolvedValue(payload),
   limit: jest.fn().mockResolvedValue(payload)
 });
 
@@ -123,5 +124,37 @@ describe('Cluster lifecycle bypass prevention', () => {
       .send({ message: 'test', status: 'responding' });
 
     expect(response.status).toBe(403);
+  });
+
+  test('cluster read remains denied to a citizen without an existing subscription', async () => {
+    const subscriptionQuery = buildQuery({ data: null, error: null });
+    getClient.mockReturnValue({ from: jest.fn(() => subscriptionQuery) });
+
+    const response = await request(buildApp({
+      id: 'citizen-1',
+      role: 'citizen',
+      organization_id: null
+    })).get(`/clusters/${CLUSTER_ID}/info`);
+
+    expect(response.status).toBe(403);
+    expect(require('../services/incidentClusteringService').getClusterInfo)
+      .not.toHaveBeenCalled();
+  });
+
+  test('cluster read remains denied to an operations user without a same-organization report', async () => {
+    const subscriptionQuery = buildQuery({ data: null, error: null });
+    const organizationReportsQuery = buildQuery({ data: [], error: null });
+    getClient.mockReturnValue({
+      from: jest.fn()
+        .mockReturnValueOnce(subscriptionQuery)
+        .mockReturnValueOnce(organizationReportsQuery)
+    });
+
+    const response = await request(buildApp(responder))
+      .get(`/clusters/${CLUSTER_ID}/info`);
+
+    expect(response.status).toBe(403);
+    expect(require('../services/incidentClusteringService').getClusterInfo)
+      .not.toHaveBeenCalled();
   });
 });
