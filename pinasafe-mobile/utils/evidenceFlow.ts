@@ -220,6 +220,60 @@ export class PhotoCaptureTimeoutError extends Error {
 export const isPhotoCaptureTimeout = (error: unknown): boolean =>
   error instanceof PhotoCaptureTimeoutError;
 
+export type CaptureFailureBoundary =
+  | 'none'
+  | 'location-unavailable'
+  | 'location-time-invalid'
+  | 'location-stale'
+  | 'location-future'
+  | 'location-shape-error'
+  | 'location-normalization-error'
+  | 'location-contract-invalid'
+  | 'location-timeout'
+  | 'photo-timeout'
+  | 'photo-uri-missing'
+  | 'photo-result-validation-error'
+  | 'photo-return-diagnostic-error'
+  | 'location-return-diagnostic-error'
+  | 'manipulation-marker-diagnostic-error'
+  | 'post-capture-unexpected';
+
+type CaptureFailureObserver = (boundary: CaptureFailureBoundary) => void;
+
+const reportCaptureFailureBoundary = (
+  observer: CaptureFailureObserver | undefined,
+  boundary: CaptureFailureBoundary,
+) => {
+  try {
+    observer?.(boundary);
+  } catch {
+    return;
+  }
+};
+
+class CaptureLocationTimeoutError extends Error {
+  constructor() {
+    super('Location could not be captured in time. Check location access and try the photo again.');
+  }
+}
+
+export function validatePhotoCaptureResult(
+  photo: { uri?: string } | null | undefined,
+  onFailureBoundary?: CaptureFailureObserver,
+): asserts photo is { uri: string } {
+  let hasUri: boolean;
+  try {
+    hasUri = Boolean(photo?.uri);
+  } catch (error) {
+    reportCaptureFailureBoundary(onFailureBoundary, 'photo-result-validation-error');
+    throw error;
+  }
+  if (!hasUri) {
+    reportCaptureFailureBoundary(onFailureBoundary, 'photo-uri-missing');
+    throw new Error('Failed to capture image.');
+  }
+}
+
 const withTimeout = <T>(promise: Promise<T>, ms: number, error: string | Error): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
@@ -251,35 +305,72 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, error: string | Error):
 export const captureWithLocation = async <Photo>(
   takePhoto: () => Promise<Photo>,
   acquireLocation: () => Promise<LocationData | null>,
+  onFailureBoundary?: CaptureFailureObserver,
 ) => {
   const startedAt = Date.now();
-  const [photo, location] = await Promise.all([
-    withTimeout(
-      takePhoto(),
-      CAPTURE_PHOTO_TIMEOUT_MS,
-      new PhotoCaptureTimeoutError()
-    ),
-    withTimeout(
-      acquireLocation(),
-      CAPTURE_LOCATION_TIMEOUT_MS,
-      'Location could not be captured in time. Check location access and try the photo again.'
-    ),
-  ]);
-  if (!location || !Number.isFinite(location.timestamp)
-    || location.timestamp < startedAt - 5000 || location.timestamp > Date.now() + 1000) {
+  let failureBoundary: CaptureFailureBoundary = 'none';
+  const recordFailure = (boundary: CaptureFailureBoundary) => {
+    failureBoundary = boundary;
+    reportCaptureFailureBoundary(onFailureBoundary, boundary);
+  };
+  function failLocation(boundary: CaptureFailureBoundary): never {
+    recordFailure(boundary);
     throw new Error('A current capture location is required. Check location permission and try again.');
   }
-  const captureLocation = Object.freeze({
-    latitude: location.coords.latitude,
-    longitude: location.coords.longitude,
-    accuracy: location.coords.accuracy,
-    capturedAt: new Date(location.timestamp).toISOString(),
-    address: location.address,
-  });
-  if (!isValidCaptureLocation(captureLocation)) {
-    throw new Error('A valid capture location is required. Check location permission and try again.');
+  try {
+    const [photo, location] = await Promise.all([
+      withTimeout(
+        takePhoto(),
+        CAPTURE_PHOTO_TIMEOUT_MS,
+        new PhotoCaptureTimeoutError()
+      ),
+      withTimeout(
+        acquireLocation(),
+        CAPTURE_LOCATION_TIMEOUT_MS,
+        new CaptureLocationTimeoutError()
+      ),
+    ]);
+    if (!location) failLocation('location-unavailable');
+    if (!Number.isFinite(location.timestamp)) failLocation('location-time-invalid');
+    if (location.timestamp < startedAt - 5000) failLocation('location-stale');
+    if (location.timestamp > Date.now() + 1000) failLocation('location-future');
+
+    let latitude: number;
+    let longitude: number;
+    let accuracy: number | undefined;
+    try {
+      latitude = location.coords.latitude;
+      longitude = location.coords.longitude;
+      accuracy = location.coords.accuracy;
+    } catch (error) {
+      recordFailure('location-shape-error');
+      throw error;
+    }
+    let captureLocation: CaptureLocation;
+    try {
+      captureLocation = Object.freeze({
+        latitude,
+        longitude,
+        accuracy,
+        capturedAt: new Date(location.timestamp).toISOString(),
+        address: location.address,
+      });
+    } catch (error) {
+      recordFailure('location-normalization-error');
+      throw error;
+    }
+    if (!isValidCaptureLocation(captureLocation)) {
+      recordFailure('location-contract-invalid');
+      throw new Error('A valid capture location is required. Check location permission and try again.');
+    }
+    return { photo, captureLocation };
+  } catch (error) {
+    if (failureBoundary === 'none') {
+      recordFailure(isPhotoCaptureTimeout(error) ? 'photo-timeout'
+        : error instanceof CaptureLocationTimeoutError ? 'location-timeout' : 'post-capture-unexpected');
+    }
+    throw error;
   }
-  return { photo, captureLocation };
 };
 
 export const getFirstAcceptedPrimaryEvidence = (items: EvidenceItem[]) =>
