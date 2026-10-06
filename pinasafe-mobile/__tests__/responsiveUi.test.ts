@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import React from 'react';
 import { ActionGroup, Button, Field, IconButton, Input, ListRow, PageHeader, ResponsiveGrid, Screen, Section } from '@/components/ui';
 import { useTabBarPresentation } from '@/components/ui/useTabBarPresentation';
@@ -113,6 +115,18 @@ describe.each([320, 360, 375, 390, 430, 768, 1280])('shared layout at %ipx', wid
     expect(flatten(inner.props.style).paddingTop).toBeGreaterThanOrEqual(36);
     expect(flatten(inner.props.style).paddingBottom).toBeGreaterThanOrEqual(34);
   });
+});
+
+test('responder history keeps type and resolved status together instead of using trailing metadata', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '../app/(tabs-responder)/history.tsx'),
+    'utf8'
+  );
+
+  expect(source).toContain(
+    `leading={<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}><TypeBadge value={report.type} /><StatusBadge value="resolved" /></View>}`
+  );
+  expect(source).not.toContain(`trailing={<StatusBadge value="resolved" />}`);
 });
 
 test('button targets, busy state and wrapping remain accessible', () => {
