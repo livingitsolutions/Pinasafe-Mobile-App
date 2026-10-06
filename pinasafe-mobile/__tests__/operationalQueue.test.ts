@@ -66,10 +66,10 @@ const cluster = (overrides: Partial<OperationalCluster> = {}): OperationalCluste
   memberReports: [member(), member({ id: 'r-2', created_at: '2026-10-05T02:00:00.000Z' })], ...overrides,
 });
 
-// State order in AdminIncidents: filter, clusters, loading, errors, acknowledgement, and sound state.
+// State order in AdminIncidents: filter, clusters, loading, errors, and sound state.
 const render = (clusters: OperationalCluster[], filter = 'all', error = '') => {
   mockHarness.slots.length = 0;
-  mockHarness.slots.push(filter, clusters, false, error, new Set<string>(), {}, 'disabled', '');
+  mockHarness.slots.push(filter, clusters, false, error, 'disabled', '');
   mockHarness.resetCursor();
   return AdminIncidents();
 };
@@ -163,29 +163,73 @@ describe('Admin operational incident queue', () => {
     const tree = render([cluster({ distinctReporterCount: 1 })]);
     const text = allText(tree).toLowerCase();
     expect(text).not.toContain('corroborated');
-    expect(findAllByType(tree, 'Button').map(button => button.props.label)).not.toContain('Acknowledge Alert');
+    expect(findAllByType(tree, 'Button').map(button => button.props.label)).not.toContain('Assign Dispatch');
   });
 
-  test('backend corroboration displays the high alert independently from priority', () => {
-    const tree = render([cluster({ distinctReporterCount: 2, corroborated: true })]);
+  test('active alert summarizes incident, authoritative location and both report counts', () => {
+    const tree = render([cluster({
+      reportCount: 3,
+      distinctReporterCount: 2,
+      corroborated: true,
+      location: 'Authoritative Main Street',
+    })]);
     const text = allText(tree);
-    expect(text).toContain('CORROBORATED HIGH ALERT');
-    expect(text).toContain('2 Reports');
-    expect(text).toContain('Priority ');
-    expect(text).toContain('HIGH');
-    expect(text).toContain('indicates urgency');
-    expect(findAllByType(tree, 'Button').map(button => button.props.label)).toContain('Acknowledge Alert');
+    expect(text).toContain('URGENT — CORROBORATED HIGH ALERT');
+    expect(text).toContain('FIRE reported at Authoritative Main Street');
+    expect(text).toContain('3 reports received · confirmed by 2 independent reporters');
+    expect(text).toContain('Independently confirmed by multiple reporters.');
+    expect(text).toContain('Immediate dispatch required.');
+    expect(text).toContain('Alert continues until a response team is assigned.');
+    expect(findAllByType(tree, 'Button').map(button => button.props.label)).toContain('Assign Dispatch');
+    expect(text).not.toContain('3 independent reports');
   });
 
-  test('acknowledged corroborated incident stays visible and resolved incident is not active high alert', () => {
-    const acknowledged = allText(render([cluster({ corroborated: true, acknowledged: true })]));
-    expect(acknowledged).toContain('CORROBORATED HIGH ALERT');
-    expect(acknowledged).toContain('Acknowledged');
-    expect(acknowledged).not.toContain('Acknowledge Alert');
+  test('road type uses the road incident label and coordinate-only location stays truthful', () => {
+    const tree = render([cluster({
+      corroborated: true,
+      type: 'road',
+      location: null,
+      distinctReporterCount: 1,
+    })]);
+    const text = allText(tree);
+    expect(text).toContain('ROAD INCIDENT reported at Exact address unavailable — coordinates available');
+    expect(text).toContain('2 reports received · confirmed by 1 independent reporter');
+  });
 
+  test('legacy acknowledgement does not silence the alert and action only navigates', () => {
+    const tree = render([cluster({ corroborated: true, acknowledged: true })]);
+    expect(allText(tree)).toContain('URGENT — CORROBORATED HIGH ALERT');
+    expect(allText(tree)).not.toContain('Acknowledged');
+    expect(findAllByType(tree, 'Button').map(button => button.props.label)).not.toContain('Acknowledge Alert');
+    const assign = findAllByType(tree, 'Button').find(button => button.props.label === 'Assign Dispatch');
+    (assign?.props.onPress as () => void)();
+    expect(router.push).toHaveBeenCalledWith('/incident/c-1');
+    expect(apiService.getOperationalClusters).not.toHaveBeenCalled();
+  });
+
+  test('confirmed assignment removes urgent action and shows the assigned corroborated state', () => {
+    const assigned = cluster({
+      corroborated: true,
+      assignedTeams: [{ id: 'team-private-id' }],
+      reportCount: 3,
+      distinctReporterCount: 2,
+    });
+    const tree = render([assigned]);
+    const text = allText(tree);
+    expect(text).toContain('CORROBORATED INCIDENT');
+    expect(text).toContain('FIRE reported at Main Street');
+    expect(text).toContain('3 reports received · confirmed by 2 independent reporters');
+    expect(text).toContain('Response team assigned');
+    expect(text).not.toContain('URGENT');
+    expect(text).not.toContain('team-private-id');
+    expect(findAllByType(tree, 'Button').map(button => button.props.label)).not.toContain('Assign Dispatch');
+  });
+
+  test('resolved incidents are not active high alerts', () => {
     const resolved = allText(render([cluster({ status: 'resolved', corroborated: true })]));
     expect(resolved).toContain('CORROBORATED');
-    expect(resolved).not.toContain('CORROBORATED HIGH ALERT');
+    expect(resolved).not.toContain('URGENT — CORROBORATED HIGH ALERT');
+    expect(resolved).not.toContain('Assign Dispatch');
   });
 
   test('native platform keeps the visual alert and disables operational audio', () => {

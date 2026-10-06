@@ -23,8 +23,6 @@ export default function AdminIncidents() {
   const [clusters, setClusters] = useState<OperationalCluster[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [acknowledgingIds, setAcknowledgingIds] = useState<Set<string>>(() => new Set());
-  const [acknowledgementErrors, setAcknowledgementErrors] = useState<Record<string, string>>({});
   const [soundState, setSoundState] = useState<'disabled' | 'enabling' | 'enabled' | 'unavailable'>('disabled');
   const [soundError, setSoundError] = useState('');
   const queueCoordinatorRef = useRef<OperationalQueueCoordinator | null>(null);
@@ -48,8 +46,6 @@ export default function AdminIncidents() {
       setClusters,
       setLoading,
       setError,
-      setAcknowledgingIds,
-      setAcknowledgementErrors,
     });
     coordinator.activate();
     queueCoordinatorRef.current = coordinator;
@@ -67,10 +63,6 @@ export default function AdminIncidents() {
     audioControllerRef.current?.syncOperationalAlerts(activeAlertIds);
   }, [activeAlertIds]);
 
-  const acknowledge = useCallback((operationalId: string) => (
-    queueCoordinatorRef.current?.acknowledge(operationalId)
-  ), []);
-
   const enableAlertSound = useCallback(async () => {
     if (!audioSupported) {
       setSoundState('unavailable');
@@ -84,7 +76,7 @@ export default function AdminIncidents() {
       setSoundState('enabled');
     } catch {
       setSoundState('unavailable');
-      setSoundError('Alert sound could not be enabled. Visual alerts and acknowledgement remain available.');
+      setSoundError('Alert sound could not be enabled. Visual alerts remain available.');
     }
   }, [audioSupported]);
 
@@ -115,9 +107,7 @@ export default function AdminIncidents() {
         key={cluster.operationalId}
         cluster={cluster}
         isAdmin={user?.role === 'admin'}
-        acknowledging={acknowledgingIds.has(cluster.operationalId)}
-        acknowledgementError={acknowledgementErrors[cluster.operationalId]}
-        onAcknowledge={() => { void acknowledge(cluster.operationalId); }}
+        onAssignDispatch={() => open(cluster)}
         onOpen={() => open(cluster)}
         onOpenMap={url => { void Linking.openURL(url); }}
       />)}</Card>}
