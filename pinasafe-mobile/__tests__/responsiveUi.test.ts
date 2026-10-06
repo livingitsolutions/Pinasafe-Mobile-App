@@ -48,6 +48,19 @@ describe.each([320, 360, 375, 390, 430, 768, 1280])('shared layout at %ipx', wid
     const rowStyle = flatten(tree.props.style instanceof Function ? tree.props.style({ pressed: false }) : tree.props.style);
     expect(rowStyle.flexDirection).toBe(width < 680 ? 'column' : 'row');
     expect(rowStyle.gap).toBe(width < 680 ? 12 : 8);
+    const fragment = React.Children.only(tree.props.children) as React.ReactElement<Props>;
+    const children = React.Children.toArray(fragment.props.children as React.ReactNode) as React.ReactElement<Props>[];
+    const copyStyle = flatten(children[0].props.style);
+    if (width < 680) {
+      expect(copyStyle).toMatchObject({ width: '100%', flexGrow: 0, flexShrink: 0, flexBasis: 'auto' });
+      expect(copyStyle.flex).toBeUndefined();
+    } else {
+      expect(copyStyle.flex).toBe(1);
+      expect(copyStyle.width).toBeUndefined();
+      expect(copyStyle.flexGrow).toBeUndefined();
+      expect(copyStyle.flexShrink).toBeUndefined();
+      expect(copyStyle.flexBasis).toBeUndefined();
+    }
     expect(collectText(tree)).toEqual(expect.arrayContaining([location, details]));
     expect(collectElements(tree).filter(element => element.type === 'Text').every(element => element.props.numberOfLines === undefined)).toBe(true);
     (tree.props.onPress as () => void)();
@@ -65,6 +78,10 @@ describe.each([320, 360, 375, 390, 430, 768, 1280])('shared layout at %ipx', wid
     const fragment = React.Children.only(tree.props.children) as React.ReactElement<Props>;
     const children = React.Children.toArray(fragment.props.children as React.ReactNode) as React.ReactElement<Props>[];
     expect(children).toHaveLength(3);
+    const rowStyle = flatten(tree.props.style);
+    expect(rowStyle.flexDirection).toBe(width < 680 ? 'column' : 'row');
+    expect(rowStyle.gap).toBe(width < 680 ? 12 : 8);
+    expect(collectElements(tree).filter(element => element.type === 'Text').every(element => element.props.numberOfLines === undefined)).toBe(true);
 
     const leadingStyle = flatten(children[0].props.style);
     const copyStyle = flatten(children[1].props.style);
@@ -77,8 +94,11 @@ describe.each([320, 360, 375, 390, 430, 768, 1280])('shared layout at %ipx', wid
       });
       expect(copyStyle).toMatchObject({
         width: '100%',
-        flex: 0,
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: 'auto',
       });
+      expect(copyStyle.flex).toBeUndefined();
       expect(trailingStyle).toMatchObject({
         width: '100%',
         alignItems: 'flex-start',
@@ -87,6 +107,10 @@ describe.each([320, 360, 375, 390, 430, 768, 1280])('shared layout at %ipx', wid
     } else {
       expect(leadingStyle.width).toBeUndefined();
       expect(copyStyle.width).toBeUndefined();
+      expect(copyStyle.flex).toBe(1);
+      expect(copyStyle.flexGrow).toBeUndefined();
+      expect(copyStyle.flexShrink).toBeUndefined();
+      expect(copyStyle.flexBasis).toBeUndefined();
       expect(trailingStyle.width).toBeUndefined();
       expect(trailingStyle.marginTop).toBeUndefined();
     }
