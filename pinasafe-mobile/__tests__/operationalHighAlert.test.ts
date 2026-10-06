@@ -1,4 +1,5 @@
 import type { OperationalCluster } from '../types/operationalCluster';
+import { canDispatchMember } from '../utils/operationalCluster';
 import {
   getActiveOperationalAlertIds,
   getOperationalHighAlertPresentation,
@@ -53,18 +54,42 @@ describe('operational corroborated High Alert state', () => {
     }))).toEqual({
       corroborated: true,
       active: true,
-      acknowledged: false,
-      label: 'CORROBORATED HIGH ALERT',
+      assigned: false,
+      label: 'URGENT — CORROBORATED HIGH ALERT',
     });
   });
 
-  test('acknowledgement keeps the alert visibly corroborated but inactive', () => {
+  test('legacy acknowledgement does not silence an unassigned corroborated alert', () => {
     expect(getOperationalHighAlertPresentation(cluster({ acknowledged: true }))).toEqual({
       corroborated: true,
-      active: false,
-      acknowledged: true,
-      label: 'CORROBORATED HIGH ALERT',
+      active: true,
+      assigned: false,
+      label: 'URGENT — CORROBORATED HIGH ALERT',
     });
+  });
+
+  test('any assigned member team silences the operational alert, including partially assigned incidents', () => {
+    const partiallyAssigned = cluster({
+      assignedTeams: [{ id: 'team-1' }],
+      memberReports: [
+        { id: 'r-1', organization_id: 'org-1', assigned_team_id: 'team-1', type: 'fire', description: null, latitude: null, longitude: null, priority: 'high', status: 'dispatched', created_at: null, coordinates: null },
+        { id: 'r-2', organization_id: 'org-1', assigned_team_id: null, type: 'fire', description: null, latitude: null, longitude: null, priority: 'high', status: 'pending', created_at: null, coordinates: null },
+      ],
+    });
+    expect(getOperationalHighAlertPresentation(partiallyAssigned)).toEqual({
+      corroborated: true,
+      active: false,
+      assigned: true,
+      label: 'CORROBORATED INCIDENT',
+    });
+    expect(canDispatchMember(partiallyAssigned.memberReports[1], 'admin')).toBe(true);
+  });
+
+  test('an already-assigned incident remains silent when it becomes corroborated', () => {
+    expect(getOperationalHighAlertPresentation(cluster({
+      corroborated: true,
+      assignedTeams: [{ id: 'team-1' }],
+    })).active).toBe(false);
   });
 
   test('resolved incidents are not active and operational incidents are tracked independently', () => {
@@ -73,7 +98,16 @@ describe('operational corroborated High Alert state', () => {
       cluster({ operationalId: 'op-2', acknowledged: true }),
       cluster({ operationalId: 'op-3', status: 'resolved' }),
       cluster({ operationalId: 'op-4', corroborated: false }),
-    ])).toEqual(['op-1']);
+      cluster({ operationalId: 'op-5', assignedTeams: [{ id: 'team-1' }] }),
+    ])).toEqual(['op-1', 'op-2']);
+  });
+
+  test('assignment request intent cannot affect alert activity before the backend response changes', () => {
+    const beforeAssignment = cluster();
+    const duringPendingAssignment = { ...beforeAssignment };
+    const afterFailure = { ...beforeAssignment };
+    expect(getOperationalHighAlertPresentation(duringPendingAssignment).active).toBe(true);
+    expect(getOperationalHighAlertPresentation(afterFailure).active).toBe(true);
   });
 });
 
@@ -140,6 +174,25 @@ describe('operational High Alert audio controller', () => {
     jest.advanceTimersByTime(1500);
     expect(context.createOscillator).toHaveBeenCalledTimes(2);
     controller.syncOperationalAlerts([]);
+    expect(jest.getTimerCount()).toBe(0);
+    controller.dispose();
+  });
+
+  test('authoritative assignment poll stops audio and later assigned polls keep it stopped', async () => {
+    const controller = new OperationalHighAlertAudioController('web');
+    await controller.enable();
+    controller.syncOperationalAlerts(getActiveOperationalAlertIds([cluster()]));
+    expect(jest.getTimerCount()).toBe(1);
+
+    const assigned = cluster({ assignedTeams: [{ id: 'team-1' }] });
+    controller.syncOperationalAlerts(getActiveOperationalAlertIds([assigned]));
+    expect(jest.getTimerCount()).toBe(0);
+
+    controller.syncOperationalAlerts(getActiveOperationalAlertIds([assigned]));
+    expect(jest.getTimerCount()).toBe(0);
+    controller.syncOperationalAlerts(getActiveOperationalAlertIds([
+      cluster({ ...assigned, status: 'resolved' }),
+    ]));
     expect(jest.getTimerCount()).toBe(0);
     controller.dispose();
   });

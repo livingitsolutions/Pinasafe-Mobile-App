@@ -3,27 +3,30 @@ import type { OperationalCluster } from '@/types/operationalCluster';
 export interface OperationalHighAlertPresentation {
   corroborated: boolean;
   active: boolean;
-  acknowledged: boolean;
-  label: 'CORROBORATED HIGH ALERT' | 'CORROBORATED';
+  assigned: boolean;
+  label: 'URGENT — CORROBORATED HIGH ALERT' | 'CORROBORATED INCIDENT' | 'CORROBORATED';
 }
 
 export function getOperationalHighAlertPresentation(
-  cluster: Pick<OperationalCluster, 'corroborated' | 'status' | 'acknowledged'>,
+  cluster: Pick<OperationalCluster, 'corroborated' | 'status' | 'assignedTeams'>,
 ): OperationalHighAlertPresentation {
   const corroborated = cluster.corroborated === true;
-  const active = corroborated && cluster.status !== 'resolved' && !cluster.acknowledged;
+  const assigned = cluster.assignedTeams.length > 0;
+  const active = corroborated && cluster.status !== 'resolved' && !assigned;
   return {
     corroborated,
     active,
-    acknowledged: corroborated && cluster.acknowledged,
-    label: corroborated && cluster.status !== 'resolved'
-      ? 'CORROBORATED HIGH ALERT'
-      : 'CORROBORATED',
+    assigned: corroborated && assigned,
+    label: active
+      ? 'URGENT — CORROBORATED HIGH ALERT'
+      : corroborated && assigned && cluster.status !== 'resolved'
+        ? 'CORROBORATED INCIDENT'
+        : 'CORROBORATED',
   };
 }
 
 export function getActiveOperationalAlertIds(
-  clusters: Pick<OperationalCluster, 'operationalId' | 'corroborated' | 'status' | 'acknowledged'>[],
+  clusters: Pick<OperationalCluster, 'operationalId' | 'corroborated' | 'status' | 'assignedTeams'>[],
 ): string[] {
   return clusters
     .filter(cluster => getOperationalHighAlertPresentation(cluster).active)

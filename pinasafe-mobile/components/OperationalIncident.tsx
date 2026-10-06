@@ -13,33 +13,46 @@ export type MemberEvidenceState =
   | { status: 'error'; message: string }
   | { status: 'ready'; items: PrivateEvidenceItem[] };
 
-export function OperationalIncidentCard({ cluster, onOpen, onOpenMap, isAdmin = false, acknowledging = false, acknowledgementError, onAcknowledge }: {
+function getOperationalTypeLabel(typeValue: string | null): string {
+  if (!typeValue) return 'INCIDENT';
+  if (typeValue.toLowerCase() === 'road') return 'ROAD INCIDENT';
+  return typeValue.toUpperCase();
+}
+
+function getReporterConfirmationCopy(distinctReporterCount: number): string {
+  return `confirmed by ${distinctReporterCount} independent ${distinctReporterCount === 1 ? 'reporter' : 'reporters'}`;
+}
+
+export function OperationalIncidentCard({ cluster, onOpen, onOpenMap, isAdmin = false, onAssignDispatch }: {
   cluster: OperationalCluster;
   onOpen: () => void;
   onOpenMap: (url: string) => void;
   isAdmin?: boolean;
-  acknowledging?: boolean;
-  acknowledgementError?: string;
-  onAcknowledge?: () => void;
+  onAssignDispatch?: () => void;
 }) {
   const location = getOperationalLocation(cluster);
   const subtitle = `${formatReportCount(cluster.reportCount)} · First reported ${formatOperationalTime(cluster.firstReportedAt)} · Latest report ${formatOperationalTime(cluster.latestReportedAt)}`;
   const alert = getOperationalHighAlertPresentation(cluster);
 
   return <>
-    {alert.corroborated ? <View style={styles.highAlert}>
-      <Text style={styles.highAlertTitle}>{alert.label}</Text>
-      {alert.acknowledged ? <Text style={styles.acknowledged}>Acknowledged</Text> : null}
-      <Text style={styles.highAlertCopy}>
-        Priority {cluster.priority?.toUpperCase() ?? 'not set'} indicates urgency; corroboration indicates independent confirmation.
+    {alert.corroborated ? <View style={[styles.highAlert, alert.active ? styles.highAlertActive : styles.highAlertSettled]}>
+      <Text style={[styles.highAlertTitle, alert.active ? styles.highAlertTitleActive : styles.highAlertTitleSettled]}>{alert.label}</Text>
+      <Text style={styles.highAlertSummary}>
+        {`${getOperationalTypeLabel(cluster.type)} reported at ${location.text}`}
       </Text>
-      {alert.active && isAdmin && onAcknowledge ? <Button
-        variant="danger"
-        label={acknowledgementError ? 'Retry Acknowledge Alert' : 'Acknowledge Alert'}
-        onPress={onAcknowledge}
-        loading={acknowledging}
-      /> : null}
-      {acknowledgementError ? <Text style={styles.acknowledgementError}>{acknowledgementError}</Text> : null}
+      <Text style={styles.highAlertCopy}>
+        {`${formatReportCount(cluster.reportCount).toLowerCase()} received · ${getReporterConfirmationCopy(cluster.distinctReporterCount)}`}
+      </Text>
+      {alert.active ? <>
+        <Text style={styles.highAlertCopy}>
+          Independently confirmed by multiple reporters. Immediate dispatch required. Alert continues until a response team is assigned.
+        </Text>
+        {isAdmin && onAssignDispatch ? <Button
+          variant="danger"
+          label="Assign Dispatch"
+          onPress={onAssignDispatch}
+        /> : null}
+      </> : alert.assigned ? <Text style={styles.highAlertCopy}>Response team assigned</Text> : null}
     </View> : null}
     <ListRow
       onPress={onOpen}
@@ -119,11 +132,14 @@ export function OperationalMemberSection({ member, index, evidence, canDispatch,
 }
 
 const styles = StyleSheet.create({
-  highAlert: { gap: space.sm, padding: space.md, marginBottom: space.md, borderRadius: radius.md, borderWidth: 2, borderColor: colors.critical, backgroundColor: colors.criticalSoft },
-  highAlertTitle: { ...type.heading, color: colors.critical },
+  highAlert: { gap: space.sm, padding: space.md, marginBottom: space.md, borderRadius: radius.md, borderWidth: 2 },
+  highAlertActive: { borderColor: colors.critical, backgroundColor: colors.criticalSoft },
+  highAlertSettled: { borderColor: colors.border, backgroundColor: colors.surfaceAlt },
+  highAlertTitle: { ...type.heading },
+  highAlertTitleActive: { color: colors.critical },
+  highAlertTitleSettled: { color: colors.ink },
+  highAlertSummary: { ...type.label, color: colors.ink },
   highAlertCopy: { ...type.body, color: colors.ink },
-  acknowledged: { ...type.label, color: colors.success },
-  acknowledgementError: { ...type.caption, color: colors.critical },
   rowActions: { alignItems: 'flex-end', gap: space.sm, maxWidth: 200 },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, alignItems: 'center' },
   count: { ...type.heading, color: colors.ink, marginTop: space.lg },
