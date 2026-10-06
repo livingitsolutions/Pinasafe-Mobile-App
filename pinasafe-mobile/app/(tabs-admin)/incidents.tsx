@@ -144,24 +144,24 @@ export default function AdminIncidents() {
   };
 
   return <Screen>
-    <PageHeader eyebrow="Operations queue" title="Incidents" description="Priority indicates urgency; corroboration indicates independent confirmation. Each incident remains actionable regardless of corroboration." action={<Button variant="secondary" label="Refresh" onPress={load} />} />
+    <PageHeader eyebrow="Operations queue" title="Incidents" description="Review incident urgency and response status. Corroborated incidents have independent reports." action={<Button variant="secondary" label="Refresh" onPress={load} loading={loading} />} />
     <View style={styles.soundControl}>
       <Text style={styles.soundCopy}>{audioSupported
         ? soundEnabled
           ? soundState === 'activation-required'
-            ? 'Alert sound ready — tap to activate. Browser autoplay protection is respected; visual alerts remain active.'
+            ? 'High Alert sound · On. Tap Activate sound so this browser can play alerts.'
             : soundState === 'unavailable'
-              ? 'Alert sound is enabled, but playback is unavailable. Visual alerts remain active.'
-              : 'Alert sound is enabled by default for qualifying active High Alerts. Visual alerts remain active.'
-          : 'Alert sound is muted. Visual alerts remain active.'
-        : 'Operational High Alert sound is unavailable on this platform. Visual alerts remain available.'}</Text>
+              ? 'High Alert sound · On. Sound is unavailable right now; visual alerts remain active.'
+              : 'High Alert sound · On. Visual alerts remain active.'
+          : 'High Alert sound · Off. Visual alerts remain active.'
+        : 'High Alert sound is unavailable on this device. Visual alerts remain active.'}</Text>
       {audioSupported
         ? soundEnabled
           ? <View style={styles.soundActions}>
             {soundState === 'activation-required' || soundState === 'unavailable'
               ? <Button
                 variant="secondary"
-                label={soundState === 'activation-required' ? 'Alert sound ready — tap to activate' : 'Retry alert sound'}
+                label={soundState === 'activation-required' ? 'Activate sound' : 'Retry alert sound'}
                 onPress={() => { void changeSoundPreference(true, true); }}
                 disabled={soundBusy}
                 loading={soundBusy}
@@ -169,7 +169,7 @@ export default function AdminIncidents() {
               : null}
             <Button
               variant="secondary"
-              label="Mute alert sound"
+              label="Turn sound off"
               onPress={() => { void changeSoundPreference(false, false); }}
               disabled={soundBusy}
               loading={soundBusy}
@@ -177,13 +177,13 @@ export default function AdminIncidents() {
           </View>
           : <Button
             variant="secondary"
-            label="Enable alert sound"
+            label="Turn sound on"
             onPress={() => { void changeSoundPreference(true, true); }}
             disabled={soundBusy}
             loading={soundBusy}
           />
         : <Button variant="secondary" label="Alert sound unavailable on this platform" onPress={() => {}} disabled />}
-      {audioSupported ? <Button variant="quiet" label={`Sound settings · ${resolveAlertTone(toneId).name}`} onPress={() => setSettingsOpen(true)} /> : null}
+      {audioSupported ? <Button variant="quiet" label={`Alert tone · ${resolveAlertTone(toneId).name} ›`} onPress={() => setSettingsOpen(true)} /> : null}
     </View>
     {settingsOpen ? <HighAlertSoundSettings
       visible
@@ -201,7 +201,7 @@ export default function AdminIncidents() {
     <View accessibilityRole="tablist" style={styles.filters}>{OPERATIONAL_FILTERS.map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: filter === value }} onPress={() => setFilter(value)} style={[styles.filter, filter === value && styles.filterActive]}><Text style={[styles.filterText, filter === value && styles.filterTextActive]}>{value}</Text></Pressable>)}</View>
     {error ? <Banner title="Queue unavailable" message={error} tone="error" action={<Button variant="secondary" label="Retry" onPress={load} />} /> : null}
     <Section title={`${visible.length} ${visible.length === 1 ? 'incident' : 'incidents'}`}>
-      {loading ? <LoadingState rows={3} /> : visible.length === 0 ? <EmptyState title="No incidents in this view" message="Choose another lifecycle filter or refresh the queue." /> : <Card>{visible.map(cluster => <OperationalIncidentCard
+      {loading ? <LoadingState rows={3} label="Loading incidents…" /> : visible.length === 0 ? <EmptyState title="No incidents in this view" message="Choose another lifecycle filter or refresh the queue." /> : <Card>{visible.map(cluster => <OperationalIncidentCard
         key={cluster.operationalId}
         cluster={cluster}
         isAdmin={user?.role === 'admin'}
@@ -213,4 +213,4 @@ export default function AdminIncidents() {
   </Screen>;
 }
 
-const styles = StyleSheet.create({ soundControl: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceAlt }, soundActions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }, soundCopy: { ...type.body, color: colors.ink, flex: 1 }, filters: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }, filter: { paddingHorizontal: space.md, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }, filterActive: { backgroundColor: colors.ink, borderColor: colors.ink }, filterText: { ...type.label, color: colors.muted, textTransform: 'capitalize' }, filterTextActive: { color: colors.white } });
+const styles = StyleSheet.create({ soundControl: { flexDirection: 'column', alignItems: 'stretch', justifyContent: 'space-between', flexWrap: 'wrap', gap: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceAlt }, soundActions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }, soundCopy: { ...type.body, color: colors.ink, minWidth: 0 }, filters: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }, filter: { minHeight: 44, justifyContent: 'center', paddingHorizontal: space.md, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }, filterActive: { backgroundColor: colors.ink, borderColor: colors.ink }, filterText: { ...type.label, color: colors.muted, textTransform: 'capitalize' }, filterTextActive: { color: colors.white } });

@@ -45,6 +45,7 @@ jest.mock('expo-camera', () => ({
   CameraView: 'CameraView',
   useCameraPermissions: () => [mockCameraPermission, mockRequestCameraPermission],
 }));
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 20, bottom: 16, left: 0, right: 0 }) }));
 jest.mock('expo-image-manipulator', () => ({
   manipulateAsync: jest.fn(),
   SaveFormat: { JPEG: 'jpeg' },
@@ -551,7 +552,7 @@ describe('V3.6C.1A camera diagnostics removed', () => {
     expect(source).not.toMatch(/diagnostic|SHUTTER:|useSyncExternalStore|console\./i);
     const text = mountReadyCapture().tree;
     expect(textOf(text).join(' ')).not.toMatch(/diagnostic|SHUTTER|generation|failure boundary|ref attached/i);
-    expect(textOf(text)).toContain('Take a clear photo for server verification');
+    expect(textOf(text)).toContain('Take a clear photo from a safe position');
   });
 
   test('capture success and failure write nothing to the console', async () => {
@@ -572,7 +573,7 @@ describe('V3.6C.1A camera diagnostics removed', () => {
     (useState as jest.Mock).mockImplementation((initial: unknown) => [initial, jest.fn()]);
     (useRef as jest.Mock).mockImplementation((initial: unknown) => ({ current: initial }));
     const tree = CameraCapture({ onCapture: jest.fn(), onCancel: jest.fn() });
-    expect(textOf(tree)).toEqual(expect.arrayContaining(['Camera permission is required.', 'Grant Permission']));
+    expect(textOf(tree)).toEqual(expect.arrayContaining(['Allow camera access to take an incident photo. Your location is captured with the photo.', 'Allow camera access', 'Back to report']));
     expect(findShutterOrNull(tree)).toBeNull();
     expect(textOf(tree).join(' ')).not.toMatch(/diagnostic/i);
   });

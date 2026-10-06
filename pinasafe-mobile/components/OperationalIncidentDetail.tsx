@@ -51,7 +51,7 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
         const response = await apiService.getReportEvidence(id);
         next = { status: 'ready', items: response.data?.data || [] };
       } catch (cause) {
-        next = { status: 'error', message: isApiError(cause) && cause.status === 403 ? 'Evidence is restricted for this report.' : 'Evidence could not be loaded. Try refreshing the signed link.' };
+        next = { status: 'error', message: isApiError(cause) && cause.status === 403 ? 'Evidence is restricted for this report.' : 'Evidence could not be loaded. Refresh the photos and try again.' };
       }
       if (mountedRef.current && requestId === requestIdRef.current) {
         setEvidence(current => ({ ...current, [id]: next }));
@@ -111,9 +111,9 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
     }
     catch (cause) {
       if (!mountedRef.current || currentRouteIdRef.current !== initiatingRouteId) return;
-      if (isApiError(cause) && cause.status === 409) { setMessage(cause.message || 'Incident or team readiness changed. The incident was refreshed; review before trying again.'); await loadRef.current(); }
+      if (isApiError(cause) && cause.status === 409) { setMessage('Incident or team readiness changed. The incident was refreshed; review before trying again.'); await loadRef.current(); }
       else if (isApiError(cause) && cause.status === 403) setMessage('You are not authorized to dispatch this incident.');
-      else setMessage(isApiError(cause) ? cause.message : 'Dispatch failed.');
+      else setMessage('We couldn’t dispatch this team. Check your connection and try again.');
     } finally {
       lock.current = false;
       if (mountedRef.current && currentRouteIdRef.current === initiatingRouteId) setDispatching(false);
@@ -127,11 +127,11 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
 
   const backAction = <IconButton label="Go back" onPress={() => { navigateBackFromIncident(router, role); }}><ArrowLeft size={20} color={colors.ink} /></IconButton>;
 
-  if (loading && !cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Loading incident" action={backAction} /><LoadingState rows={4} /></Screen>;
-  if (!cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Incident not found" action={backAction} /><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
+  if (loading && !cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Loading incident" navigation={backAction} /><LoadingState rows={4} label="Loading incident details…" /></Screen>;
+  if (!cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Incident not found" navigation={backAction} /><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
 
   return <Screen>
-    <PageHeader eyebrow="Operational incident" title={cluster.type === 'fire' ? 'Fire incident' : cluster.type === 'road' ? 'Road incident' : 'Incident'} description={`Reference ${(cluster.clusterId ?? cluster.operationalId).slice(0, 8).toUpperCase()}`} action={backAction} />
+    <PageHeader eyebrow="Operational incident" title={cluster.type === 'fire' ? 'Fire incident' : cluster.type === 'road' ? 'Road incident' : 'Incident'} description={`Reference ${(cluster.clusterId ?? cluster.operationalId).slice(0, 8).toUpperCase()}`} navigation={backAction} />
     {summaryError ? <Banner title="Operational summary" message={summaryError} tone="warning" action={<Button variant="secondary" label="Retry" onPress={load} />} /> : null}
     <OperationalIncidentHeader cluster={cluster} onOpenMap={openMap} />
     {hasOperationalAssignment ? <Banner title="Response team assigned" message="A response team is assigned to this operational incident. Each report keeps its own status and evidence." tone="info" /> : null}
@@ -150,11 +150,11 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
       />)}
     </Section>
     <Dialog visible={Boolean(selectedReportId)} title="Dispatch this report" onClose={() => setSelectedReportId(null)} footer={<View style={styles.dialogActions}><Button variant="secondary" label="Cancel" onPress={() => setSelectedReportId(null)} /><Button label="Dispatch team" disabled={!teamId} loading={dispatching} onPress={dispatch} /></View>}>
-      <Text style={styles.dialogText}>This dispatches only the selected report. Select an active, assignment-ready team. Final eligibility is enforced by the backend.</Text>
+      <Text style={styles.dialogText}>This dispatches only the selected report. Select an active, assignment-ready team. Only eligible teams can be dispatched.</Text>
       {message ? <Banner title="Dispatch unavailable" message={message} tone="error" /> : null}
-      {loadingTeams ? <Text style={styles.dialogText}>Loading teams…</Text> : teams.length === 0 ? <EmptyState title="No active teams" message="Create and staff a response team before dispatching this incident." /> : <View style={styles.teamList}>{teams.map(team => { const ready = isTeamPresentationReady(team); return <Pressable key={team.id} disabled={!ready} onPress={() => setTeamId(team.id)} style={[styles.team, teamId === team.id && styles.teamSelected, !ready && styles.teamDisabled]}><View style={{ flex: 1 }}><Text style={styles.teamName}>{team.name}</Text><Text style={styles.teamMeta}>{ready ? `${team.members?.length || 0} listed members` : 'Not assignment ready'}</Text></View>{teamId === team.id ? <ShieldAlert size={20} color={colors.brand} /> : null}</Pressable>; })}</View>}
+      {loadingTeams ? <Text style={styles.dialogText}>Loading teams…</Text> : teams.length === 0 ? <EmptyState title="No active teams" message="Create and staff a response team before dispatching this incident." /> : <View style={styles.teamList}>{teams.map(team => { const ready = isTeamPresentationReady(team); return <Pressable accessibilityRole="radio" accessibilityLabel={team.name} accessibilityState={{ checked: teamId === team.id, disabled: !ready }} key={team.id} disabled={!ready} onPress={() => setTeamId(team.id)} style={[styles.team, teamId === team.id && styles.teamSelected, !ready && styles.teamDisabled]}><View style={{ flex: 1 }}><Text style={styles.teamName}>{team.name}</Text><Text style={styles.teamMeta}>{ready ? `${team.members?.length || 0} listed members` : 'Not assignment ready'}</Text></View>{teamId === team.id ? <ShieldAlert size={20} color={colors.brand} /> : null}</Pressable>; })}</View>}
     </Dialog>
   </Screen>;
 }
 
-const styles = StyleSheet.create({ dialogText: { ...type.body, color: colors.muted, marginBottom: space.lg }, dialogActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.md }, teamList: { gap: space.sm }, team: { minHeight: 66, flexDirection: 'row', alignItems: 'center', padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md }, teamSelected: { borderColor: colors.brand, backgroundColor: colors.brandSoft }, teamDisabled: { opacity: .5 }, teamName: { ...type.label, color: colors.ink }, teamMeta: { ...type.caption, color: colors.muted, marginTop: 2 } });
+const styles = StyleSheet.create({ dialogText: { ...type.body, color: colors.muted, marginBottom: space.lg }, dialogActions: { gap: space.sm }, teamList: { gap: space.sm }, team: { minHeight: 66, flexDirection: 'row', alignItems: 'center', padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md }, teamSelected: { borderColor: colors.brand, backgroundColor: colors.brandSoft }, teamDisabled: { opacity: .5 }, teamName: { ...type.label, color: colors.ink }, teamMeta: { ...type.caption, color: colors.muted, marginTop: 2 } });

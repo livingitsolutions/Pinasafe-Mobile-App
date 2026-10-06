@@ -30,6 +30,7 @@ const mockAuth = { user: null as null | { role: string } };
 jest.mock('@/contexts/AuthContext', () => ({ useAuth: () => mockAuth }));
 jest.mock('@/services/apiService', () => ({ apiService: {}, isApiError: () => false }));
 jest.mock('@/components/CitizenResponseTracking', () => ({ __esModule: true, default: () => null }));
+jest.mock('@/components/ResponderNavigation', () => ({ __esModule: true, default: 'ResponderNavigation' }));
 jest.mock('@/components/OperationalIncidentDetail', () => ({ __esModule: true, default: () => null }));
 jest.mock('@/components/ui', () => ({
   ActionBar: 'ActionBar', Banner: 'Banner', Button: 'Button', Card: 'Card', DetailItem: 'DetailItem',
@@ -173,6 +174,22 @@ describe('incident screen Back wiring', () => {
   test('responder Back on a deep link goes to Assignments', () => {
     backButton(renderIncident('responder', { report: { ...report, status: 'dispatched' } }))();
     expect(router.replace).toHaveBeenCalledWith('/(tabs-responder)/dispatch');
+  });
+
+  test('a responding responder sees existing navigation and a shortcut to the existing sharing controls', () => {
+    const tree = renderIncident('responder', { report: { ...report, status: 'responding' } });
+    const elements = collectElements(tree);
+    expect(elements.some(element => element.type === 'ResponderNavigation' && element.props.reportId === report.id)).toBe(true);
+    const controls = elements.find(element => element.props.label === 'Open live location controls')!;
+    (controls.props.onPress as () => void)();
+    expect(router.push).toHaveBeenCalledWith('/(tabs-responder)/dispatch');
+    expect(elements.some(element => element.props.label === 'Mark resolved' && element.props.variant === 'danger')).toBe(true);
+  });
+
+  test('citizen detail never renders responder navigation or sharing controls', () => {
+    const elements = collectElements(renderIncident('citizen', { report: { ...report, status: 'responding' } }));
+    expect(elements.some(element => element.type === 'ResponderNavigation')).toBe(false);
+    expect(elements.some(element => element.props.label === 'Open live location controls')).toBe(false);
   });
 
   test('Back uses history when the app has a previous screen', () => {

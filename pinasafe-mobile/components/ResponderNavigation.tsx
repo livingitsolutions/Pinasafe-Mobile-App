@@ -57,7 +57,7 @@ export default function ResponderNavigation({ reportId }: { reportId: string }) 
     {position || destination ? <RouteMap team={position} destination={destination} route={routeAvailable ? toRoutePoints(snapshot.route) : []} stale={stale} teamLabel="You" destinationLabel="Incident" /> : null}
     {position ? <View style={styles.metrics}>
       <View style={styles.metric}>
-        <Text style={styles.metricLabel}>{stale ? 'Estimated arrival (location stale)' : 'Estimated arrival'}</Text>
+        <Text style={styles.metricLabel}>{stale ? 'Estimated arrival (last known location)' : 'Estimated arrival'}</Text>
         <Text style={styles.metricValue}>{eta ?? ETA_UNAVAILABLE}</Text>
       </View>
       <View style={styles.metric}>
@@ -66,7 +66,7 @@ export default function ResponderNavigation({ reportId }: { reportId: string }) 
       </View>
     </View> : null}
     {position ? <Text style={[styles.caption, stale ? { color: colors.warning } : null]}>
-      {stale ? 'Location stale. ' : ''}Last updated {new Date(position.captured_at).toLocaleTimeString()} ({formatLocationAge(position.captured_at, now)})
+      {stale ? 'Location update delayed. ' : ''}Last updated {new Date(position.captured_at).toLocaleTimeString()} ({formatLocationAge(position.captured_at, now)})
     </Text> : null}
     {error ? <Text style={[styles.caption, { color: colors.warning }]}>{error} Showing the last update.</Text> : null}
     {navigationUrl ? <View style={styles.actions}>
@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
   panel: { gap: space.sm },
   stale: { padding: space.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft },
   caption: { ...type.caption, color: colors.muted },
-  metrics: { flexDirection: 'row', gap: space.md },
+  metrics: { flexDirection: 'column', gap: space.md },
   metric: { flex: 1, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt, gap: 2 },
   metricLabel: { ...type.caption, color: colors.muted },
   metricValue: { ...type.title, color: colors.ink },

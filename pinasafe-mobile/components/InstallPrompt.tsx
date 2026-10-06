@@ -5,41 +5,40 @@ import { useInstallPrompt } from '@/contexts/InstallPromptContext';
 import { Banner, Button, Card } from '@/components/ui';
 import { colors, radius, space, type } from '@/theme/tokens';
 
-export default function InstallPrompt() {
-  const { presentation, status, install, dismiss } = useInstallPrompt();
+export default function InstallPrompt({ manual = false }: { manual?: boolean } = {}) {
+  const { presentation: promotion, manualPresentation, status, install, dismiss } = useInstallPrompt();
+  const presentation = manual ? manualPresentation : promotion;
 
-  if (status === 'installed') {
-    return <Banner tone="success" title="PinaSafe installed" message="Open PinaSafe from your home screen or app list." />;
-  }
-  if (status === 'accepted') {
-    return <Banner tone="info" title="Installing PinaSafe" message="Your browser is adding PinaSafe. It appears on your home screen when finished." />;
-  }
-  if (status === 'failed') {
-    return <Banner tone="warning" title="Install unavailable" message="Your browser could not install PinaSafe right now. You can keep using PinaSafe here." />;
-  }
+  if (status === 'installed') return null;
+  if (status === 'accepted' && !manual) return <Banner tone="info" title="Install requested" message="Complete any remaining browser steps. Installation is not confirmed yet." />;
+  if (status === 'failed' && !manual) return <Banner tone="warning" title="Install unavailable" message="Your browser could not open installation. Try Install app or Add to Home Screen in the browser menu. You can keep using PinaSafe here." />;
   if (presentation === 'hidden') return null;
 
   const ios = presentation === 'ios-instructions';
+  const prompt = presentation === 'prompt';
   return <Card style={styles.card}>
     <View style={styles.icon}>{ios ? <Share size={20} color={colors.brand} /> : <Download size={20} color={colors.brand} />}</View>
     <View style={styles.copy}>
       <Text style={styles.title}>Install PinaSafe</Text>
       <Text style={styles.message}>{ios
-        ? 'Tap Share in your browser, then choose Add to Home Screen.'
-        : 'Add PinaSafe to your home screen for quicker access.'} An internet connection is still needed to send reports.</Text>
+        ? 'Tap Share, then Add to Home Screen.'
+        : prompt ? 'Add PinaSafe to your home screen for quicker access.'
+          : 'Open your browser menu and look for Install app or Add to Home Screen. If neither is available, keep using PinaSafe in your browser.'} An internet connection is still needed to send reports.</Text>
+      {status === 'failed' ? <Text accessibilityRole="alert" style={styles.message}>Your browser could not open installation. Use the browser menu to try again. You can keep using PinaSafe here.</Text> : null}
+      {status === 'accepted' ? <Text style={styles.message}>Installation is not confirmed yet. Complete any remaining browser steps.</Text> : null}
       <View style={styles.actions}>
-        {ios ? null : <Button variant="secondary" label="Install PinaSafe" onPress={() => { void install(); }} loading={status === 'prompting'} />}
-        <Button variant="quiet" label="Not now" onPress={dismiss} />
+        {prompt ? <Button variant="secondary" label="Install PinaSafe" onPress={() => { void install(); }} loading={status === 'prompting'} /> : null}
+        {!manual ? <Button variant="quiet" label="Not now" onPress={dismiss} /> : null}
       </View>
     </View>
   </Card>;
 }
 
 const styles = StyleSheet.create({
-  card: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  card: { gap: space.md },
   icon: { width: 40, height: 40, borderRadius: radius.md, backgroundColor: colors.brandSoft, alignItems: 'center', justifyContent: 'center' },
-  copy: { flex: 1, gap: space.xs },
+  copy: { minWidth: 0, gap: space.xs },
   title: { ...type.heading, color: colors.ink },
   message: { ...type.body, color: colors.muted },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.sm },
+  actions: { gap: space.sm, marginTop: space.sm },
 });

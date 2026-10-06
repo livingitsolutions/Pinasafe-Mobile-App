@@ -1,11 +1,14 @@
 import { Redirect, Tabs } from 'expo-router';
 import { Radio, MapPin, Clock, Users, User } from 'lucide-react-native';
+import { useTabBarPresentation } from '@/components/ui/useTabBarPresentation';
+import { LoadingState, Screen } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
-import { ActivityIndicator, View } from 'react-native';
+
 
 export default function ResponderTabLayout() {
   const { user, isLoading } = useAuth();
-  if (isLoading) return <View className="flex-1 items-center justify-center"><ActivityIndicator /></View>;
+  const tabPresentation = useTabBarPresentation();
+  if (isLoading) return <Screen><LoadingState label="Opening your workspace…" rows={2} /></Screen>;
   if (!user) return <Redirect href="/(auth)/login" />;
   if (user.role !== 'responder') return <Redirect href="/" />;
 
@@ -13,21 +16,14 @@ export default function ResponderTabLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: '#B42318',
-          tabBarInactiveTintColor: '#667085',
-          tabBarStyle: {
-            backgroundColor: '#FFFFFF',
-            borderTopColor: '#E5E7EB',
-            borderTopWidth: 1,
-            height: 68,
-            paddingBottom: 8,
-          },
+          ...tabPresentation,
         }}
       >
         <Tabs.Screen
           name="dispatch"
           options={{
             title: 'Assignments',
+            tabBarLabel: 'Dispatch',
             tabBarIcon: ({ size, color }) => (
               <Radio size={size} color={color} strokeWidth={1.5} />
             ),

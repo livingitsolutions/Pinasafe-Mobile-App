@@ -146,8 +146,8 @@ const styles = StyleSheet.create({
   meta: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg },
   metaText: { ...type.body, color: colors.ink },
   metaLabel: { ...type.label, color: colors.muted },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md, justifyContent: 'flex-end' },
-  sound: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
-  soundText: { ...type.caption, color: colors.muted, flex: 1, minWidth: 200 },
-  soundActions: { flexDirection: 'row', gap: space.sm },
+  actions: { flexDirection: 'column', flexWrap: 'wrap', gap: space.md, justifyContent: 'flex-end' },
+  sound: { flexDirection: 'column', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
+  soundText: { ...type.caption, color: colors.muted, minWidth: 0 },
+  soundActions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
 });

@@ -10,7 +10,7 @@ import { colors, radius, space, type } from '@/theme/tokens';
 const formatTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 const STOP_MESSAGES: Record<string, string> = {
-  user: 'You stopped sharing. Your command center keeps the last position, marked stale.',
+  user: 'You stopped sharing. Your command center keeps the last position, marked as delayed.',
   not_responding: 'Live tracking ended because this response is no longer active.',
   unauthorized: 'Live tracking ended because you are no longer authorized for this incident.',
 };
@@ -60,7 +60,7 @@ export default function ResponderLiveTracking({ reportId }: { reportId: string }
   }
 
   return <View style={styles.panel}>
-    {state.phase === 'stopped' ? <Text style={styles.caption}>{STOP_MESSAGES[state.reason] ?? STOP_MESSAGES.user}</Text> : <Text style={styles.caption}>Share your device location with your command center while you respond. It is never shown to the citizen.</Text>}
+    {state.phase === 'stopped' ? <Text style={styles.caption}>{STOP_MESSAGES[state.reason] ?? STOP_MESSAGES.user}</Text> : <Text style={styles.caption}>Share your device location with your command center while you respond. Citizens see the response team’s location, not your identity.</Text>}
     {state.phase === 'stopped' && state.reason !== 'user' ? null : <View style={styles.actions}><Button label="Start Live Tracking" loading={state.phase === 'starting'} icon={<LocateFixed size={18} color={colors.white} />} onPress={start} /></View>}
   </View>;
 }

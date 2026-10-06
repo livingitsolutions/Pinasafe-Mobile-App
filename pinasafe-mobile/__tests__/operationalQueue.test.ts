@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import React from 'react';
 import AdminIncidents from '../app/(tabs-admin)/incidents';
 import type { OperationalCluster, OperationalMemberReport } from '../types/operationalCluster';
 import { collectText, createHookHarness, findAllByType } from './support/tree';
@@ -131,8 +130,7 @@ describe('Admin operational incident queue', () => {
 
   test('valid coordinates expose Open in Maps', async () => {
     const tree = render([cluster()]);
-    const trailing = rows(tree)[0].props.trailing as React.ReactElement;
-    const mapButton = findAllByType(trailing, 'Button').find(button => button.props.label === 'Open in Maps');
+    const mapButton = findAllByType(tree, 'Button').find(button => button.props.label === 'Open in Maps');
     expect(mapButton).toBeDefined();
     await (mapButton?.props.onPress as () => void)();
     expect(Linking.openURL).toHaveBeenCalledWith('https://www.openstreetmap.org/?mlat=10&mlon=124#map=17/10/124');
@@ -309,7 +307,7 @@ describe('alert/audio and terminology freeze', () => {
   });
 
   test('the Incidents command center labels corroboration separately from priority', () => {
-    expect(read('app/(tabs-admin)/incidents.tsx')).toMatch(/Priority indicates urgency; corroboration indicates independent confirmation/);
+    expect(read('app/(tabs-admin)/incidents.tsx')).toMatch(/Review incident urgency and response status. Corroborated incidents have independent reports./);
     expect(read('utils/operationalHighAlert.ts')).toMatch(/CORROBORATED HIGH ALERT/);
   });
 

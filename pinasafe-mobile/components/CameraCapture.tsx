@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { Camera as CameraIcon, RotateCcw, X } from 'lucide-react-native';
@@ -19,6 +20,7 @@ interface CameraCaptureProps {
 
 export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProps) {
   const cameraRef = useRef<CameraView>(null);
+  const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -111,14 +113,15 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
 
   if (!permission?.granted) {
     return (
-      <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }}>
-        <Text style={{ color: 'white', marginBottom: 12 }}>Camera permission is required.</Text>
+      <View style={{ flex: 1, backgroundColor: '#182230', padding: 24, justifyContent: 'center', alignItems: 'stretch', gap: 16 }}>
+        <Text style={{ color: 'white', marginBottom: 12 }}>Allow camera access to take an incident photo. Your location is captured with the photo.</Text>
         <TouchableOpacity
-          onPress={requestPermission}
-          style={{ backgroundColor: '#dc2626', padding: 12, borderRadius: 8 }}
+          accessibilityRole="button" accessibilityLabel="Allow camera access" onPress={requestPermission}
+          style={{ minHeight: 48, backgroundColor: '#dc2626', padding: 16, borderRadius: 8 }}
         >
-          <Text style={{ color: 'white', fontWeight: '600' }}>Grant Permission</Text>
+          <Text style={{ color: 'white', fontWeight: '600' }}>Allow camera access</Text>
         </TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to report" onPress={onCancel} style={{ minHeight: 48, padding: 16 }}><Text style={{ color: 'white', textAlign: 'center' }}>Back to report</Text></TouchableOpacity>
       </View>
     );
   }
@@ -140,7 +143,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
       <View
         style={{
           position: 'absolute',
-          top: 40,
+          top: 16 + insets.top,
           width: '100%',
           paddingHorizontal: 20,
           flexDirection: 'row',
@@ -148,14 +151,14 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         }}
       >
         <TouchableOpacity
-          onPress={onCancel}
-          style={{ padding: 10, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.4)' }}
+          accessibilityRole="button" accessibilityLabel="Back to report" onPress={onCancel}
+          style={{ minWidth: 44, minHeight: 44, padding: 11, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.4)' }}
         >
           <X size={22} color="white" strokeWidth={1.5} />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={toggleFacing}
-          style={{ padding: 10, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.4)' }}
+          accessibilityRole="button" accessibilityLabel="Switch camera" onPress={toggleFacing}
+          style={{ minWidth: 44, minHeight: 44, padding: 11, borderRadius: 50, backgroundColor: 'rgba(0,0,0,0.4)' }}
         >
           <RotateCcw size={22} color="white" strokeWidth={1.5} />
         </TouchableOpacity>
@@ -164,7 +167,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
       <View
         style={{
           position: 'absolute',
-          bottom: 40,
+          bottom: 24 + insets.bottom,
           width: '100%',
           alignItems: 'center',
         }}
@@ -179,7 +182,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
             }}
           >
             <ActivityIndicator size="large" color="#fff" />
-            <Text style={{ color: 'white', marginTop: 8 }}>Uploading and classifying…</Text>
+            <Text style={{ color: 'white', marginTop: 8 }}>Checking your photo and location…</Text>
           </View>
         )}
         {!isProcessing && shutterState.reason === 'starting' && (
@@ -196,7 +199,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
           </View>
         )}
         <TouchableOpacity
-          onPress={takePicture}
+          accessibilityRole="button" accessibilityLabel="Take incident photo" onPress={takePicture}
           disabled={!shutterState.enabled}
           accessibilityState={{ disabled: !shutterState.enabled }}
           style={{
@@ -217,7 +220,7 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
           />
         </TouchableOpacity>
         <Text style={{ color: 'white', marginTop: 14 }}>
-          {shutterState.reason === 'starting' ? 'Starting camera…' : 'Take a clear photo for server verification'}
+          {shutterState.reason === 'starting' ? 'Starting camera…' : 'Take a clear photo from a safe position'}
         </Text>
       </View>
     </View>

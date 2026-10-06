@@ -242,8 +242,8 @@ export default function ReportEmergency() {
       if (!id) throw new Error('The server did not confirm the report.');
       setReportId(id);
       setStage('success');
-    } catch (cause) {
-      setError(isApiError(cause) ? cause.message : 'The report could not be submitted. Your details remain on this screen.');
+    } catch {
+      setError('We couldn’t confirm submission. Your details remain here. Check your connection before trying again.');
     } finally {
       lock.current = false;
       setBusy(false);
@@ -260,7 +260,7 @@ export default function ReportEmergency() {
         <View style={styles.success}>
           <View style={styles.successIcon}><Check size={32} color={colors.success} /></View>
           <Text style={styles.successTitle}>Report confirmed</Text>
-          <Text style={styles.successText}>Your incident was securely submitted. Follow its authoritative status from incident history.</Text>
+          <Text style={styles.successText}>Your emergency report was submitted. Follow its response status in Reported Emergencies.</Text>
           <Text style={styles.reference}>Reference {reportId.slice(0, 8).toUpperCase()}</Text>
           <Button label="View incident" onPress={() => router.replace(`/incident/${reportId}`)} />
           <Button variant="quiet" label="Back to emergency home" onPress={() => router.replace('/(tabs-citizen)/emergency-main')} />
@@ -272,7 +272,7 @@ export default function ReportEmergency() {
   if (stage === 'capture') {
     return (
       <Screen>
-        <PageHeader eyebrow="Step 1 of 3" title="Capture primary evidence" description="Take one live-camera photo. The server will verify and classify it automatically." />
+        <PageHeader eyebrow="Step 1 of 3" title="Take an incident photo" description="Take one live photo from a safe position. PinaSafe checks the photo and detects the incident type." />
         {recoveryContent ? (
           <Banner title={recoveryContent.title} message={recoveryContent.message} tone="error" />
         ) : null}
@@ -280,7 +280,7 @@ export default function ReportEmergency() {
         {locationStatus === 'denied' ? (
           <Banner title="Location required" message="PinaSafe needs your location to report an incident. Grant location permission in your device settings and try again." tone="warning" />
         ) : null}
-        <Section title="Live camera evidence" description="Evidence must come from the live camera. The AI classifier determines the incident type.">
+        <Section title="Incident photo" description="Use your live camera. The photo helps identify a supported fire or road incident.">
           {evidence.length > 0 ? (
             <View style={styles.evidenceList}>
               {evidence.map(item => (
@@ -312,7 +312,7 @@ export default function ReportEmergency() {
           ) : failedCaptureId ? (
             <Button label="Retake Photo" onPress={retakeFailedCapture} disabled={busy} loading={busy} icon={<Camera size={19} color={colors.white} />} />
           ) : (
-            <Button label="Capture Primary Evidence" onPress={openCamera} disabled={hasAcceptedPrimary} loading={busy} icon={<Camera size={19} color={colors.white} />} />
+            <Button label="Take incident photo" onPress={openCamera} disabled={hasAcceptedPrimary} loading={busy} icon={<Camera size={19} color={colors.white} />} />
           )}
         </Section>
       </Screen>
@@ -322,9 +322,9 @@ export default function ReportEmergency() {
   if (stage === 'verify') {
     return (
       <Screen>
-        <PageHeader eyebrow="Step 2 of 3" title="Classification result" description="Review the authoritative incident type and primary capture location." />
+        <PageHeader eyebrow="Step 2 of 3" title="Review the incident" description="Check the detected incident type and where the photo was taken." />
         {error ? <Banner title="This step needs attention" message={error} tone="error" /> : null}
-        <Section title="AI classification result">
+        <Section title="Detected incident">
           <Card tone="critical">
             <View style={styles.verifyHead}>
               {incidentType ? <TypeBadge value={incidentType} /> : null}
@@ -406,7 +406,7 @@ export default function ReportEmergency() {
           <Input accessibilityLabel="Contact number" value={contactNumber} onChangeText={setContactNumber} keyboardType="phone-pad" placeholder="Contact number" />
         </Field>
       </Section>
-      <Banner title="Ready to submit" message="PinaSafe routes the report according to backend organization policy. No response ETA is promised." tone="info" />
+      <Banner title="Ready to submit" message="Review your photo and location before sending. Estimated arrival appears only when a response team shares an available route." tone="info" />
       <View style={styles.actions}>
         <Button variant="secondary" label="Back" onPress={() => setStage('verify')} />
         <Button label="Submit emergency report" onPress={submit} loading={busy} disabled={!canSubmitEvidenceReport(evidence, sessionId, incidentType)} icon={<Send size={18} color={colors.white} />} />
@@ -420,8 +420,8 @@ const styles = StyleSheet.create({
   progressItem: { height: 4, flex: 1, backgroundColor: colors.border, borderRadius: 2 },
   progressActive: { backgroundColor: colors.brand },
   evidenceList: { gap: space.md },
-  evidence: { flexDirection: 'row', gap: space.md },
-  image: { width: 112, height: 112, borderRadius: radius.md, backgroundColor: colors.surfaceAlt },
+  evidence: { flexDirection: 'column', gap: space.md },
+  image: { width: '100%', maxWidth: 420, aspectRatio: 1, borderRadius: radius.md, backgroundColor: colors.surfaceAlt },
   evidenceCopy: { flex: 1, gap: space.sm },
   evidenceStatus: { ...typography.heading, color: colors.ink },
   errorText: { ...typography.caption, color: colors.critical },
@@ -429,7 +429,7 @@ const styles = StyleSheet.create({
   counter: { ...typography.caption, color: colors.muted, textAlign: 'center' },
   verifyHead: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md, alignItems: 'center' },
   verifyType: { ...typography.heading, color: colors.ink, flex: 1 },
-  verifyEvidence: { flexDirection: 'row', gap: space.md, marginTop: space.md },
+  verifyEvidence: { flexDirection: 'column', gap: space.md, marginTop: space.md },
   confidenceText: { ...typography.caption, color: colors.muted },
   locationInfo: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   locationCopy: { flex: 1, gap: 2 },
@@ -442,8 +442,8 @@ const styles = StyleSheet.create({
   reviewLocationRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: space.sm },
   reviewCoords: { ...typography.caption, color: colors.muted },
   reviewDescription: { ...typography.body, color: colors.ink, marginVertical: space.lg },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: space.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: space.lg },
-  success: { flex: 1, minHeight: 520, maxWidth: 560, alignSelf: 'center', justifyContent: 'center', alignItems: 'stretch', gap: space.lg },
+  actions: { flexDirection: 'column', justifyContent: 'flex-end', flexWrap: 'wrap', gap: space.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: space.lg },
+  success: { flex: 1, minHeight: 320, maxWidth: 560, alignSelf: 'center', justifyContent: 'center', alignItems: 'stretch', gap: space.lg },
   successIcon: { width: 64, height: 64, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', borderRadius: 32, backgroundColor: colors.successSoft },
   successTitle: { ...typography.display, textAlign: 'center', color: colors.ink },
   successText: { ...typography.body, textAlign: 'center', color: colors.muted },

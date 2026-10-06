@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import teamService, { RescueTeam } from '@/services/teamService';
 import personnelService, { Personnel } from '@/services/personnelService';
 import { Banner, Button, Card, Dialog, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Screen, StatusBadge, TextArea } from '@/components/ui';
@@ -9,6 +9,8 @@ import { isTeamPresentationReady } from '@/utils/operations';
 const emptyForm = { name: '', description: '', teamLeaderId: '', selected: [] as string[] };
 
 export default function TeamManagement() {
+  const { width } = useWindowDimensions();
+  const compact = width < 680;
   const [teams, setTeams] = useState<RescueTeam[]>([]);
   const [personnel, setPersonnel] = useState<Personnel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,20 +122,21 @@ export default function TeamManagement() {
     return <View style={styles.details}>
       <Text style={styles.detailHeading}>Team members</Text>
       {teamMembers.length === 0
-        ? <Text style={styles.meta}>No members assigned.</Text>
+        ? <Text style={styles.meta}>No responders have been added to this team yet.</Text>
         : teamMembers.map(member => {
           const isLeader = member.user_id === team.team_leader_id;
           const name = member.user?.name || member.user?.email || 'Unknown member';
-          return <View key={member.id} style={styles.memberRow}>
+          return <View key={member.id} style={[styles.memberRow, compact && styles.memberStack]}>
             <View style={styles.memberInfo}>
-              <Text style={styles.optionName}>{name}{isLeader ? ' — Leader' : ''}</Text>
+              <Text style={styles.optionName}>{name}</Text>
               {member.user?.email ? <Text style={styles.meta}>{member.user.email}</Text> : null}
               {member.user?.phone ? <Text style={styles.meta}>{member.user.phone}</Text> : null}
+              {isLeader ? <Text style={styles.leaderBadge}>Team leader</Text> : null}
             </View>
             {isLeader
               ? <Text style={styles.meta}>Change the team leader before removing this member.</Text>
               : <Button
-                variant="secondary"
+                variant="danger"
                 label="Remove"
                 disabled={saving}
                 onPress={() => { void runTeamAction(() => teamService.removeTeamMember(team.id, member.id)); }}
@@ -147,7 +150,7 @@ export default function TeamManagement() {
           {eligibleTeamMembers.map(member => <Button
             key={member.user_id}
             variant={member.user_id === team.team_leader_id ? 'primary' : 'secondary'}
-            label={`Make ${member.user?.name || member.user?.email || 'member'} leader`}
+            label={`Make team leader: ${member.user?.name || member.user?.email || 'member'}`}
             disabled={saving || member.user_id === team.team_leader_id}
             onPress={() => { if (member.user_id) void runTeamAction(() => teamService.updateTeam(team.id, { teamLeaderId: member.user_id })); }}
           />)}
@@ -164,7 +167,7 @@ export default function TeamManagement() {
         {!team.is_active ? <Text style={styles.meta}>Activate this team before adding members.</Text> : null}
         {available.length === 0
           ? <Text style={styles.meta}>No unassigned active rescue members are available.</Text>
-          : <View style={styles.options}>{available.map(member => <View key={member.id} style={styles.memberRow}>
+          : <View style={styles.options}>{available.map(member => <View key={member.id} style={[styles.memberRow, compact && styles.memberStack]}>
             <Text style={styles.optionName}>{member.name}</Text>
             <Button
               variant="secondary"
@@ -200,7 +203,7 @@ export default function TeamManagement() {
     />
     {error ? <ErrorState message={error} onRetry={load} /> : null}
     {loading
-      ? <LoadingState rows={3} />
+      ? <LoadingState rows={3} label="Loading response teams…" />
       : teams.length === 0
         ? <EmptyState
           title="No teams"
@@ -212,7 +215,7 @@ export default function TeamManagement() {
           const expanded = expandedTeamId === team.id;
           return <Card key={team.id} style={styles.team}>
             <View style={styles.head}>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={styles.name}>{team.name}</Text>
                 <Text style={styles.description}>{team.description || 'No team description'}</Text>
               </View>
@@ -238,19 +241,21 @@ export default function TeamManagement() {
       visible={open}
       title="Create response team"
       onClose={() => setOpen(false)}
-      footer={<View style={styles.actions}>
+      footer={<View style={[styles.actions, compact && styles.memberStack]}>
         <Button variant="secondary" label="Cancel" onPress={() => setOpen(false)} />
         <Button label="Create team" onPress={() => { void create(); }} loading={saving} disabled={!form.name.trim() || !form.teamLeaderId} />
       </View>}
     >
       <View style={styles.form}>
-        <Field label="Team name"><Input value={form.name} onChangeText={name => setForm(value => ({ ...value, name }))} /></Field>
+        {error ? <Banner title="Team needs attention" message={error} tone="error" /> : null}
+        <Field label="Team name"><Input accessibilityLabel="Team name" value={form.name} onChangeText={name => setForm(value => ({ ...value, name }))} /></Field>
         <Field label="Description"><TextArea value={form.description} onChangeText={description => setForm(value => ({ ...value, description }))} /></Field>
-        <Field label="Team leader" hint="The leader must be an unassigned, active rescue member.">
+        <Field label="Team leader" hint="Choose an unassigned, active rescue member. A leader is required to create a team.">
+          {eligibleToCreate.length === 0 ? <Banner title="No available responders" message="Invite a responder from Personnel, or review existing team assignments before creating a team." tone="info" /> : null}
           <View style={styles.options}>{eligibleToCreate.map(member => {
             const id = member.user_id || '';
             const selected = form.teamLeaderId === id;
-            return <Pressable key={member.id} disabled={!id} onPress={() => selectLeader(id)} style={[styles.option, selected && styles.optionSelected]}>
+            return <Pressable key={member.id} disabled={!id} onPress={() => selectLeader(id)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} style={[styles.option, selected && styles.optionSelected]}>
               <Text style={styles.optionName}>{member.name}{selected ? ' — Leader' : ''}</Text>
             </Pressable>;
           })}</View>
@@ -260,7 +265,7 @@ export default function TeamManagement() {
             const id = member.user_id || '';
             const selected = form.selected.includes(id);
             const isLeader = form.teamLeaderId === id;
-            return <Pressable key={member.id} disabled={!id || isLeader} onPress={() => toggleMember(id)} style={[styles.option, selected && styles.optionSelected]}>
+            return <Pressable key={member.id} disabled={!id || isLeader} onPress={() => toggleMember(id)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} style={[styles.option, selected && styles.optionSelected]}>
               <Text style={styles.optionName}>{member.name}{isLeader ? ' — Leader' : selected ? ' — Selected' : ''}</Text>
             </Pressable>;
           })}</View>
@@ -273,8 +278,8 @@ export default function TeamManagement() {
 
 const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg },
-  team: { flex: 1, minWidth: 280, maxWidth: 540, gap: space.lg },
-  head: { flexDirection: 'row', gap: space.md },
+  team: { flexGrow: 1, flexBasis: '100%', minWidth: 0, maxWidth: 540, gap: space.md },
+  head: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   name: { ...type.heading, color: colors.ink },
   description: { ...type.body, color: colors.muted, marginTop: space.xs },
   readiness: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: space.md },
@@ -282,12 +287,14 @@ const styles = StyleSheet.create({
   details: { gap: space.lg, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: space.md },
   detailHeading: { ...type.heading, color: colors.ink },
   memberRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
-  memberInfo: { flex: 1 },
+  memberStack: { flexDirection: 'column', alignItems: 'stretch' },
+  leaderBadge: { ...type.label, color: colors.brandDark, backgroundColor: colors.brandSoft, borderRadius: radius.sm, padding: space.sm, alignSelf: 'flex-start' },
+  memberInfo: { flex: 1, minWidth: 0, gap: space.xs },
   meta: { ...type.caption, color: colors.muted, marginTop: space.xs },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.md, justifyContent: 'flex-end' },
   form: { gap: space.lg },
   options: { gap: space.sm },
-  option: { padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
+  option: { minHeight: 48, padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
   optionSelected: { borderColor: colors.brand, backgroundColor: colors.brandSoft },
   optionName: { ...type.label, color: colors.ink },
 });

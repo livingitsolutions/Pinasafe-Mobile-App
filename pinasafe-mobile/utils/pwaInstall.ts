@@ -1,7 +1,7 @@
 export const INSTALL_DISMISS_KEY = 'pinasafe.installPrompt.dismissedAt';
 export const INSTALL_DISMISS_MS = 14 * 24 * 60 * 60 * 1000;
 
-export type InstallPresentation = 'hidden' | 'prompt' | 'ios-instructions';
+export type InstallPresentation = 'hidden' | 'prompt' | 'ios-instructions' | 'browser-instructions';
 
 export interface InstallEnvironment {
   isWeb: boolean;
@@ -29,6 +29,12 @@ export function getInstallPresentation(env: InstallEnvironment): InstallPresenta
   if (env.hasDeferredPrompt) return 'prompt';
   if (env.isIos) return 'ios-instructions';
   return 'hidden';
+}
+
+export function getManualInstallPresentation(env: InstallEnvironment): InstallPresentation {
+  if (!env.isWeb || env.isStandalone) return 'hidden';
+  if (env.hasDeferredPrompt) return 'prompt';
+  return env.isIos ? 'ios-instructions' : 'browser-instructions';
 }
 
 export function detectStandalone(win: WindowLike | undefined): boolean {

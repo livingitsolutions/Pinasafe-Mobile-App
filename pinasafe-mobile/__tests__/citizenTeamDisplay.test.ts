@@ -19,6 +19,7 @@ jest.mock('react-native', () => ({
   View: 'View',
 }));
 jest.mock('@/components/RouteMap', () => 'RouteMap');
+jest.mock('@/components/ui', () => ({ Banner: 'Banner', Button: 'Button' }));
 jest.mock('@/services/apiService', () => ({ apiService: { getCitizenResponseTracking: jest.fn() } }));
 
 const NOW = Date.parse('2026-10-06T10:00:00.000Z');

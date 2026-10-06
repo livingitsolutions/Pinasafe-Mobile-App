@@ -5,8 +5,8 @@ import { WifiOff } from 'lucide-react-native';
 import { colors, space, type } from '@/theme/tokens';
 import { readOnlineStatus } from '@/utils/pwaInstall';
 
-export const OFFLINE_TITLE = 'You are offline';
-export const OFFLINE_MESSAGE = 'PinaSafe needs an internet connection to send reports and receive live updates. Information on screen may be out of date. For immediate danger, call your local emergency hotline.';
+export const OFFLINE_TITLE = 'You’re offline';
+export const OFFLINE_MESSAGE = 'Emergency actions require an internet connection. Updates may be delayed. If you are in immediate danger, call your local emergency hotline.';
 
 export default function ConnectivityBanner() {
   const insets = useSafeAreaInsets();

@@ -10,6 +10,7 @@ import { Platform, View } from 'react-native';
 import ConnectivityBanner from '@/components/ConnectivityBanner';
 import { InstallPromptProvider } from '@/contexts/InstallPromptContext';
 import { registerServiceWorker } from '@/utils/pwaRegistration';
+import { LoadingState, Screen } from '@/components/ui';
 
 export default function RootLayout() {
   useFrameworkReady();
@@ -23,12 +24,11 @@ export default function RootLayout() {
     if (Platform.OS === 'web' && typeof window !== 'undefined') void registerServiceWorker(window, !__DEV__);
   }, []);
 
-  if (!fontsLoaded) return null;
-
   return (
+    <InstallPromptProvider>
+    {fontsLoaded ?
     <AuthProvider>
       <EmergencyProvider>
-        <InstallPromptProvider>
         <View style={{ flex: 1 }}>
         <ConnectivityBanner />
         <Stack screenOptions={{ headerShown: false }}>
@@ -43,8 +43,9 @@ export default function RootLayout() {
         </Stack>
         </View>
         <StatusBar style="auto" />
-        </InstallPromptProvider>
       </EmergencyProvider>
     </AuthProvider>
+    : <Screen><LoadingState label="Opening PinaSafe…" rows={2} /></Screen>}
+    </InstallPromptProvider>
   );
 }

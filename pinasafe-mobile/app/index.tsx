@@ -3,7 +3,7 @@ import { resolveRoleRoute } from '@/utils/roleRouting';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Redirect, router } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { LoadingState, Screen } from '@/components/ui';
 import OnboardingScreen from '../components/OnboardingScreen';
 import SplashScreen from '../components/SplashScreen';
 
@@ -45,7 +45,7 @@ export default function Index() {
 
   // Wait for auth context to load
   if (authLoading || isLoading) {
-    return showSplash ? <SplashScreen onFinish={handleSplashFinish} /> : <View className="flex-1 bg-white" />;
+    return showSplash ? <SplashScreen onFinish={handleSplashFinish} /> : <Screen><LoadingState label="Opening your workspace…" rows={2} /></Screen>;
   }
 
   if (showSplash) {

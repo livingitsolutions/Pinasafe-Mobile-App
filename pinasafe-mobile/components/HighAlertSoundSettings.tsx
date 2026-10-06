@@ -185,8 +185,8 @@ export default function HighAlertSoundSettings({
 
 const styles = StyleSheet.create({
   body: { gap: space.xl, paddingBottom: space.sm },
-  footer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: space.md },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceAlt, minHeight: 64 },
+  footer: { gap: space.sm },
+  toggleRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.md, padding: space.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceAlt, minHeight: 64 },
   toggleCopy: { flex: 1, gap: 2 },
   toggleLabel: { ...type.label, color: colors.ink, minWidth: 28 },
   track: { width: 44, height: 26, borderRadius: radius.pill, backgroundColor: colors.borderStrong, padding: 3, justifyContent: 'center' },
@@ -198,9 +198,9 @@ const styles = StyleSheet.create({
   heading: { ...type.heading, color: colors.ink },
   caption: { ...type.caption, color: colors.muted },
   toneList: { gap: space.sm, marginTop: space.xs },
-  toneRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.sm, paddingVertical: space.sm, paddingHorizontal: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  toneRow: { flexDirection: 'column', alignItems: 'center', flexWrap: 'wrap', gap: space.sm, paddingVertical: space.sm, paddingHorizontal: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   toneRowSelected: { borderColor: colors.brand, borderWidth: 2, backgroundColor: colors.brandSoft },
-  toneSelect: { flex: 1, minWidth: 200, flexDirection: 'row', alignItems: 'flex-start', gap: space.md, minHeight: 44, paddingVertical: space.xs },
+  toneSelect: { flex: 1, minWidth: 0, width: '100%', flexDirection: 'row', alignItems: 'flex-start', gap: space.md, minHeight: 44, paddingVertical: space.xs },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
   radioOn: { borderColor: colors.brand, backgroundColor: colors.brand },
   toneCopy: { flex: 1, gap: 2 },

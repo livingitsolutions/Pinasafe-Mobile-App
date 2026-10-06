@@ -7,6 +7,7 @@ import {
   detectIos,
   detectStandalone,
   getInstallPresentation,
+  getManualInstallPresentation,
   INSTALL_DISMISS_KEY,
   INSTALL_DISMISS_MS,
   readInstallDismissal,
@@ -32,7 +33,7 @@ jest.mock('react-native', () => ({
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 20, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('lucide-react-native', () => ({ Download: 'Download', Share: 'Share', WifiOff: 'WifiOff' }));
 jest.mock('@/components/ui', () => ({ Banner: 'Banner', Button: 'Button', Card: 'Card' }));
-const mockInstall = { presentation: 'hidden', status: 'idle', install: jest.fn(), dismiss: jest.fn() };
+const mockInstall = { presentation: 'hidden', manualPresentation: 'hidden', status: 'idle', install: jest.fn(), dismiss: jest.fn() };
 jest.mock('@/contexts/InstallPromptContext', () => ({ useInstallPrompt: () => mockInstall }));
 
 const { useState } = jest.requireMock('react') as { useState: jest.Mock };
@@ -77,6 +78,10 @@ describe('web app manifest', () => {
     expect(html).toContain('name="theme-color"');
     expect(html).toContain('apple-mobile-web-app-title" content="PinaSafe"');
     expect(html).toContain('prefers-reduced-motion: reduce');
+  });
+
+  test('Netlify serves the manifest as a manifest, not an opaque download', () => {
+    expect(read('public/_headers')).toMatch(/\/manifest\.webmanifest\s+Content-Type: application\/manifest\+json/);
   });
 });
 
@@ -168,6 +173,22 @@ describe('service worker caching rules', () => {
 describe('install presentation', () => {
   const env = { isWeb: true, isStandalone: false, isIos: false, hasDeferredPrompt: true, dismissedAt: null, now: 1_000_000_000 };
 
+  test('manual installation ignores promotional dismissal and retains the native prompt', () => {
+    const dismissed = { ...env, dismissedAt: env.now - 1000 };
+    expect(getInstallPresentation(dismissed)).toBe('hidden');
+    expect(getManualInstallPresentation(dismissed)).toBe('prompt');
+  });
+
+  test('manual installation provides safe guidance without a promotional browser event', () => {
+    expect(getManualInstallPresentation({ ...env, hasDeferredPrompt: false })).toBe('browser-instructions');
+    expect(getManualInstallPresentation({ ...env, hasDeferredPrompt: false, isIos: true, dismissedAt: env.now })).toBe('ios-instructions');
+  });
+
+  test('manual installation is hidden on native and standalone platforms', () => {
+    expect(getManualInstallPresentation({ ...env, isStandalone: true })).toBe('hidden');
+    expect(getManualInstallPresentation({ ...env, isWeb: false })).toBe('hidden');
+  });
+
   test('Chromium with a deferred prompt shows Install', () => {
     expect(getInstallPresentation(env)).toBe('prompt');
   });
@@ -254,9 +275,9 @@ describe('service worker registration', () => {
 });
 
 describe('Install PinaSafe call to action', () => {
-  const render = (overrides: Partial<typeof mockInstall>) => {
-    Object.assign(mockInstall, { presentation: 'hidden', status: 'idle', install: jest.fn(), dismiss: jest.fn() }, overrides);
-    const tree = InstallPrompt();
+  const render = (overrides: Partial<typeof mockInstall>, manual = false) => {
+    Object.assign(mockInstall, { presentation: 'hidden', manualPresentation: 'hidden', status: 'idle', install: jest.fn(), dismiss: jest.fn() }, overrides);
+    const tree = InstallPrompt({ manual });
     return { tree, elements: collectElements(tree), text: collectText(tree).join(' ') };
   };
 
@@ -276,22 +297,40 @@ describe('Install PinaSafe call to action', () => {
 
   test('iOS shows Share then Add to Home Screen instructions without a fake install button', () => {
     const { elements, text } = render({ presentation: 'ios-instructions' });
-    expect(text).toContain('Tap Share in your browser, then choose Add to Home Screen.');
+    expect(text).toContain('Tap Share, then Add to Home Screen.');
     expect(elements.some(element => element.props.label === 'Install PinaSafe' && element.type === 'Button')).toBe(false);
   });
 
   test('an accepted prompt does not claim installation before the browser confirms it', () => {
     const { text } = render({ status: 'accepted' });
     expect(text).not.toContain('PinaSafe installed');
-    expect(text).toContain('Installing PinaSafe');
+    expect(text).toContain('Installation is not confirmed yet.');
   });
 
-  test('a confirmed install says so', () => {
-    expect(render({ status: 'installed' }).text).toContain('PinaSafe installed');
+  test('a confirmed install hides redundant installation UI', () => {
+    expect(render({ status: 'installed' }).tree).toBeNull();
   });
 
   test('a failed prompt keeps web use available', () => {
-    expect(render({ status: 'failed' }).text).toContain('You can keep using PinaSafe here.');
+    expect(render({ status: 'failed', manualPresentation: 'browser-instructions' }, true).text).toContain('You can keep using PinaSafe here.');
+    expect(render({ status: 'failed' }).text).toContain('Try Install app or Add to Home Screen');
+  });
+
+  test('Profile keeps the manual native install action even when the promotion is hidden', () => {
+    const { elements } = render({ presentation: 'hidden', manualPresentation: 'prompt' }, true);
+    (elements.find(element => element.props.label === 'Install PinaSafe')!.props.onPress as () => void)();
+    expect(mockInstall.install).toHaveBeenCalledTimes(1);
+    expect(elements.some(element => element.props.label === 'Not now')).toBe(false);
+  });
+
+  test('Profile shows useful installation instructions without claiming browser support', () => {
+    const { text } = render({ manualPresentation: 'browser-instructions' }, true);
+    expect(text).toContain('Open your browser menu');
+    expect(text).toContain('If neither is available');
+  });
+
+  test('Profile hides the manual path in standalone mode', () => {
+    expect(render({ manualPresentation: 'hidden' }, true).tree).toBeNull();
   });
 });
 
@@ -299,8 +338,8 @@ describe('connectivity banner', () => {
   test('shows a clear offline state', () => {
     useState.mockReturnValueOnce([false, jest.fn()]);
     const text = collectText(ConnectivityBanner()).join(' ');
-    expect(text).toContain('You are offline');
-    expect(text).toContain('needs an internet connection to send reports');
+    expect(text).toContain('You’re offline');
+    expect(text).toContain('Emergency actions require an internet connection');
   });
 
   test('is hidden while online', () => {
@@ -329,7 +368,7 @@ describe('installed-mode wiring', () => {
 
   test('the install CTA is offered on sign-in and profile, not on emergency screens', () => {
     expect(read('app/(auth)/login.tsx')).toContain('<InstallPrompt />');
-    expect(read('components/ProfileScreen.tsx')).toContain('<InstallPrompt />');
+    expect(read('components/ProfileScreen.tsx')).toContain('<InstallPrompt manual />');
     expect(read('app/(tabs-citizen)/emergency-main.tsx')).not.toContain('InstallPrompt');
     expect(read('app/incident/[id].tsx')).not.toContain('InstallPrompt');
   });

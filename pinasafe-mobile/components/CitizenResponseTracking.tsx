@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { apiService, CitizenResponseTracking as CitizenResponseSnapshot } from '@/services/apiService';
 import RouteMap from '@/components/RouteMap';
+import { Banner, Button } from '@/components/ui';
 import { formatLocationAge } from '@/utils/liveTracking';
 import { describeCitizenResponse, describeCitizenTeam, ETA_UNAVAILABLE, formatDistance, formatEta, isRoutePoint, NAVIGATION_POLL_MS, toRoutePoints } from '@/utils/responseRoute';
 import { colors, radius, space, type } from '@/theme/tokens';
@@ -38,7 +39,7 @@ export default function CitizenResponseTracking({ reportId }: { reportId: string
   }, [load]);
 
   if (!snapshot) {
-    return failed ? null : <Text style={styles.caption}>Checking response status...</Text>;
+    return failed ? <Banner title="Response status unavailable" message="We couldn’t load your response status. Check your connection and try again." tone="warning" action={<Button variant="secondary" label="Try again" onPress={() => { void load(); }} />} /> : <Text style={styles.caption}>Checking response status...</Text>;
   }
 
   const view = describeCitizenResponse(snapshot, now);
@@ -100,9 +101,9 @@ const styles = StyleSheet.create({
   caption: { ...type.caption, color: colors.muted },
   badge: { paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill },
   badgeText: { ...type.caption, fontFamily: type.label.fontFamily },
-  teamCard: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
+  teamCard: { flexDirection: 'column', alignItems: 'stretch', gap: space.sm, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
   teamName: { ...type.title, color: colors.ink },
-  metrics: { flexDirection: 'row', gap: space.md },
+  metrics: { flexDirection: 'column', gap: space.md },
   metric: { flex: 1, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt, gap: 2 },
   metricLabel: { ...type.caption, color: colors.muted },
   metricValue: { ...type.title, color: colors.ink },

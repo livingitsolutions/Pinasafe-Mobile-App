@@ -28,7 +28,8 @@ export default function Root({ children }: PropsWithChildren) {
 
 const baseStyles = `
 html, body { background-color: #F7F7F5; overscroll-behavior-y: none; }
-body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); overflow-wrap: anywhere; }
+[role="button"]:focus-visible, [role="radio"]:focus-visible, [role="checkbox"]:focus-visible, [role="switch"]:focus-visible, [role="tab"]:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible { outline: 3px solid #175CD3; outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }`;

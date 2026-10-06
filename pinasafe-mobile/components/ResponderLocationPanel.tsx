@@ -41,7 +41,7 @@ export default function ResponderLocationPanel({ reportId }: { reportId: string 
 
   if (error && !snapshot) return <Banner title="Responder location" message={error} tone="warning" />;
   if (!snapshot) return <Text style={styles.caption}>Loading responder location...</Text>;
-  if (snapshot.response_complete) return <Banner title="Response complete" message="This incident is resolved. Live responder tracking has ended." tone="success" />;
+  if (snapshot.response_complete) return <Banner title="Response completed" message="This incident is resolved. Live responder tracking has ended." tone="success" />;
 
   const location = snapshot.location;
   if (!location) {
@@ -58,7 +58,7 @@ export default function ResponderLocationPanel({ reportId }: { reportId: string 
     <View style={styles.row}>
       <UserRound size={18} color={colors.ink} />
       <Text style={[styles.title, { flex: 1 }]}>{[location.team_name, location.responder_name].filter(Boolean).join(' - ') || 'Assigned responder'}</Text>
-      <View style={[styles.badge, { backgroundColor: stale ? colors.warningSoft : colors.successSoft }]}><Text style={[styles.badgeText, { color: stale ? colors.warning : colors.success }]}>{stale ? 'STALE' : 'FRESH'}</Text></View>
+      <View style={[styles.badge, { backgroundColor: stale ? colors.warningSoft : colors.successSoft }]}><Text style={[styles.badgeText, { color: stale ? colors.warning : colors.success }]}>{stale ? 'STALE' : 'LIVE'}</Text></View>
     </View>
     <Text style={styles.caption}>Last updated {new Date(location.captured_at).toLocaleTimeString()} ({formatLocationAge(location.captured_at, now)}){location.accuracy_meters !== null ? `, accuracy about ${Math.round(location.accuracy_meters)} m` : ''}</Text>
     {stale ? <Text style={[styles.caption, { color: colors.warning }]}>No update in the last 30 seconds. The responder may have stopped sharing or lost signal.</Text> : null}
@@ -71,7 +71,7 @@ const styles = StyleSheet.create({
   panel: { gap: space.sm, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   panelFresh: { borderColor: colors.success },
   panelStale: { borderColor: colors.warning, backgroundColor: colors.warningSoft },
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.sm },
   title: { ...type.label, color: colors.ink },
   caption: { ...type.caption, color: colors.muted },
   badge: { paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill },

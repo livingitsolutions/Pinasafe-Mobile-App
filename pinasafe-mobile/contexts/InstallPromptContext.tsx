@@ -5,7 +5,9 @@ import {
   detectIos,
   detectStandalone,
   getInstallPresentation,
+  getManualInstallPresentation,
   InstallPresentation,
+  INSTALL_DISMISS_MS,
   readInstallDismissal,
   runInstallPrompt,
   saveInstallDismissal,
@@ -15,6 +17,7 @@ export type InstallStatus = 'idle' | 'prompting' | 'accepted' | 'installed' | 'f
 
 interface InstallPromptValue {
   presentation: InstallPresentation;
+  manualPresentation: InstallPresentation;
   status: InstallStatus;
   install: () => Promise<void>;
   dismiss: () => void;
@@ -22,6 +25,7 @@ interface InstallPromptValue {
 
 const InstallPromptContext = createContext<InstallPromptValue>({
   presentation: 'hidden',
+  manualPresentation: 'hidden',
   status: 'idle',
   install: async () => {},
   dismiss: () => {},
@@ -42,12 +46,16 @@ export function InstallPromptProvider({ children }: { children: ReactNode }) {
     setStandalone(detectStandalone(win));
     setIsIos(detectIos(win));
     setDismissedAt(readInstallDismissal(win));
+    const displayMode = win.matchMedia?.('(display-mode: standalone)');
+    const onDisplayMode = () => setStandalone(detectStandalone(win));
+    displayMode?.addEventListener?.('change', onDisplayMode);
     const onPrompt = (event: Event) => {
       event.preventDefault();
       setDeferred(event as BeforeInstallPromptEvent);
     };
     const onInstalled = () => {
       setDeferred(null);
+      setStandalone(true);
       setStatus('installed');
     };
     win.addEventListener('beforeinstallprompt', onPrompt);
@@ -55,6 +63,7 @@ export function InstallPromptProvider({ children }: { children: ReactNode }) {
     return () => {
       win.removeEventListener('beforeinstallprompt', onPrompt);
       win.removeEventListener('appinstalled', onInstalled);
+      displayMode?.removeEventListener?.('change', onDisplayMode);
     };
   }, []);
 
@@ -63,6 +72,14 @@ export function InstallPromptProvider({ children }: { children: ReactNode }) {
     saveInstallDismissal(browserWindow(), now);
     setDismissedAt(now);
   }, []);
+
+  useEffect(() => {
+    if (dismissedAt === null) return;
+    const remaining = dismissedAt + INSTALL_DISMISS_MS - Date.now();
+    if (remaining <= 0) { setDismissedAt(null); return; }
+    const timer = setTimeout(() => setDismissedAt(null), Math.min(remaining, INSTALL_DISMISS_MS));
+    return () => clearTimeout(timer);
+  }, [dismissedAt]);
 
   const install = useCallback(async () => {
     if (!deferred) return;
@@ -73,28 +90,32 @@ export function InstallPromptProvider({ children }: { children: ReactNode }) {
     if (outcome === 'accepted') {
       setStatus(current => (current === 'installed' ? current : 'accepted'));
     } else if (outcome === 'dismissed') {
-      setStatus('idle');
+      setStatus(current => (current === 'installed' ? current : 'idle'));
       dismiss();
     } else {
-      setStatus('failed');
+      setStatus(current => (current === 'installed' ? current : 'failed'));
     }
   }, [deferred, dismiss]);
 
-  const value = useMemo<InstallPromptValue>(() => ({
-    presentation: status === 'installed' || status === 'accepted'
-      ? 'hidden'
-      : getInstallPresentation({
-        isWeb: Platform.OS === 'web',
-        isStandalone: standalone,
-        isIos,
-        hasDeferredPrompt: deferred !== null,
-        dismissedAt,
-        now: Date.now(),
-      }),
-    status,
-    install,
-    dismiss,
-  }), [deferred, dismiss, dismissedAt, install, isIos, standalone, status]);
+  const value = useMemo<InstallPromptValue>(() => {
+    const environment = {
+      isWeb: Platform.OS === 'web',
+      isStandalone: standalone || status === 'installed',
+      isIos,
+      hasDeferredPrompt: deferred !== null,
+      dismissedAt,
+      now: Date.now(),
+    };
+    return {
+      presentation: status === 'installed' || status === 'accepted'
+        ? 'hidden'
+        : getInstallPresentation(environment),
+      manualPresentation: getManualInstallPresentation(environment),
+      status,
+      install,
+      dismiss,
+    };
+  }, [deferred, dismiss, dismissedAt, install, isIos, standalone, status]);
 
   return <InstallPromptContext.Provider value={value}>{children}</InstallPromptContext.Provider>;
 }

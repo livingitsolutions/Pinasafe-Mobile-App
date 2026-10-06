@@ -1,13 +1,16 @@
 import { Redirect, Tabs } from 'expo-router';
 import { BarChart3, Users, AlertTriangle, UsersRound, User } from 'lucide-react-native';
+import { useTabBarPresentation } from '@/components/ui/useTabBarPresentation';
+import { LoadingState, Screen } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
-import { ActivityIndicator, useWindowDimensions, View } from 'react-native';
+import { useWindowDimensions } from 'react-native';
 
 const AdminTabLayout: React.FC = () => {
   const { user, isLoading } = useAuth();
+  const tabPresentation = useTabBarPresentation();
   const { width } = useWindowDimensions();
   const desktop = width >= 1040;
-  if (isLoading) return <View className="flex-1 items-center justify-center"><ActivityIndicator /></View>;
+  if (isLoading) return <Screen><LoadingState label="Opening your workspace…" rows={2} /></Screen>;
   if (!user) return <Redirect href="/(auth)/login" />;
   if (user.role !== 'admin') return <Redirect href="/" />;
 
@@ -15,15 +18,12 @@ const AdminTabLayout: React.FC = () => {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#B91C1C',
-        tabBarInactiveTintColor: '#667085',
+        ...tabPresentation,
         tabBarPosition: desktop ? 'left' : 'bottom',
         tabBarLabelPosition: desktop ? 'beside-icon' : 'below-icon',
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#E4E7EC',
-          borderTopWidth: 1,
-          ...(desktop ? { width: 220, paddingTop: 24 } : { height: 68, paddingBottom: 8 }),
+          ...tabPresentation.tabBarStyle,
+          ...(desktop ? { width: 220, height: undefined, paddingTop: 24 } : {}),
         },
       }}
     >

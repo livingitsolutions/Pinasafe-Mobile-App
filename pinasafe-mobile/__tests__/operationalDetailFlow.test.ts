@@ -40,6 +40,7 @@ jest.mock('@/services/apiService', () => ({
 jest.mock('@/services/teamService', () => ({ __esModule: true, default: { getTeams: jest.fn() } }));
 jest.mock('@/utils/operations', () => ({ isTeamPresentationReady: () => true }));
 jest.mock('@/components/CitizenResponseTracking', () => ({ __esModule: true, default: () => null }));
+jest.mock('@/components/ResponderNavigation', () => ({ __esModule: true, default: 'ResponderNavigation' }));
 jest.mock('@/components/ui', () => ({
   ActionBar: 'ActionBar', Banner: 'Banner', Button: 'Button', Card: 'Card', DetailItem: 'DetailItem',
   Dialog: 'Dialog', EmptyState: 'EmptyState', ErrorState: 'ErrorState', IconButton: 'IconButton',
@@ -371,7 +372,7 @@ describe('operational detail behavior under concurrent requests', () => {
     const content = collectText(elements).join(' | ');
     expect(apiService.getOperationalClusters).toHaveBeenCalledTimes(2);
     expect(content).toContain('Response team assigned');
-    expect(content).toContain('already assigned to this operational incident');
+    expect(content).toContain('Incident or team readiness changed. The incident was refreshed; review before trying again.');
     expect(content).toContain('Pending sibling remains visible');
     expect(findAllByType(elements, 'Button').some(button => button.props.label === 'Dispatch this report')).toBe(false);
     expect(content).not.toContain('private-team-id');

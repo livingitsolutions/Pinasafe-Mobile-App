@@ -54,18 +54,18 @@ export function OperationalIncidentCard({ cluster, onOpen, onOpenMap, isAdmin = 
         /> : null}
       </> : alert.assigned ? <Text style={styles.highAlertCopy}>Response team assigned</Text> : null}
     </View> : null}
-    <ListRow
-      onPress={onOpen}
-      leading={<TypeBadge value={cluster.type || 'incident'} />}
-      title={location.text}
-      subtitle={subtitle}
-      trailing={<View style={styles.rowActions}>
+    <View style={styles.queueItem}>
+      <ListRow leading={<TypeBadge value={cluster.type || 'incident'} />} title={location.text} subtitle={subtitle} onPress={onOpen} />
+      <View style={styles.badges}>
         <StatusBadge value={cluster.status} />
         {cluster.priority ? <Priority value={cluster.priority} /> : null}
+      </View>
+      {cluster.assignedTeams.length ? <Text style={styles.caption}>Response team assigned</Text> : null}
+      <View style={styles.queueActions}>
+        <Button variant={alert.active && isAdmin ? 'secondary' : 'primary'} label="View Incident" onPress={onOpen} />
         {location.mapUrl ? <Button variant="quiet" label="Open in Maps" onPress={() => onOpenMap(location.mapUrl as string)} icon={<MapPin size={16} color={colors.ink} />} /> : null}
-        <Button variant="secondary" label="View Incident" onPress={onOpen} />
-      </View>}
-    />
+      </View>
+    </View>
   </>;
 }
 
@@ -79,7 +79,7 @@ export function OperationalIncidentHeader({ cluster, onOpenMap }: { cluster: Ope
       {cluster.priority ? <Priority value={cluster.priority} /> : null}
     </View>
     <Text style={styles.count}>{formatReportCount(cluster.reportCount)}</Text>
-    <Text style={styles.caption}>Independent citizen reports associated with one operational incident. Status and priority summarize the reports below.</Text>
+    <Text style={styles.caption}>Reports about this incident. Review each report and its response status below.</Text>
     <View style={styles.location}><MapPin size={20} color={colors.brand} /><Text style={styles.locationText}>{location.text}</Text></View>
     <View style={styles.times}>
       <Text style={styles.caption}>First reported {formatOperationalTime(cluster.firstReportedAt)}</Text>
@@ -132,6 +132,8 @@ export function OperationalMemberSection({ member, index, evidence, canDispatch,
 }
 
 const styles = StyleSheet.create({
+  queueItem: { minWidth: 0, gap: space.sm, paddingVertical: space.lg, borderBottomWidth: 1, borderBottomColor: colors.border },
+  queueActions: { gap: space.sm, marginTop: space.sm },
   highAlert: { gap: space.sm, padding: space.md, marginBottom: space.md, borderRadius: radius.md, borderWidth: 2 },
   highAlertActive: { borderColor: colors.critical, backgroundColor: colors.criticalSoft },
   highAlertSettled: { borderColor: colors.border, backgroundColor: colors.surfaceAlt },
@@ -140,7 +142,6 @@ const styles = StyleSheet.create({
   highAlertTitleSettled: { color: colors.ink },
   highAlertSummary: { ...type.label, color: colors.ink },
   highAlertCopy: { ...type.body, color: colors.ink },
-  rowActions: { alignItems: 'flex-end', gap: space.sm, maxWidth: 200 },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, alignItems: 'center' },
   count: { ...type.heading, color: colors.ink, marginTop: space.lg },
   caption: { ...type.caption, color: colors.muted, marginTop: 2 },
