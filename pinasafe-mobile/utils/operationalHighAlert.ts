@@ -1,6 +1,8 @@
 import type { OperationalCluster } from '@/types/operationalCluster';
+import { DEFAULT_ALERT_TONE_ID, findAlertTone, getAlertToneLengthSec, resolveAlertTone, scheduleAlertTone, type AlertTone } from '@/utils/alertTones';
 
 const AUDIO_PREFERENCE_KEY = 'pinasafe.highAlertAudioEnabled';
+const TONE_PREFERENCE_PREFIX = 'pinasafe.highAlertTone.admin.';
 
 export type OperationalHighAlertAudioState =
   | 'enabled'
@@ -59,6 +61,23 @@ export function saveOperationalHighAlertAudioPreference(enabled: boolean): void 
   window.localStorage.setItem(AUDIO_PREFERENCE_KEY, String(enabled));
 }
 
+function tonePreferenceKey(userId: string | null | undefined): string {
+  return `${TONE_PREFERENCE_PREFIX}${userId || 'device'}`;
+}
+
+export function readOperationalHighAlertTone(userId: string | null | undefined): string {
+  if (typeof window === 'undefined' || !window.localStorage) return DEFAULT_ALERT_TONE_ID;
+  const stored = window.localStorage.getItem(tonePreferenceKey(userId));
+  return findAlertTone(stored, 'command-center')?.id ?? DEFAULT_ALERT_TONE_ID;
+}
+
+export function saveOperationalHighAlertTone(userId: string | null | undefined, toneId: string): void {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    throw new Error('Alert tone preference storage is unavailable.');
+  }
+  window.localStorage.setItem(tonePreferenceKey(userId), resolveAlertTone(toneId, 'command-center').id);
+}
+
 export class OperationalHighAlertAudioController {
   private context: AudioContext | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -69,6 +88,7 @@ export class OperationalHighAlertAudioController {
   private activationRequired = false;
   private playbackAttempt = 0;
   private currentState: OperationalHighAlertAudioState = 'enabled';
+  private tone: AlertTone = resolveAlertTone(DEFAULT_ALERT_TONE_ID);
 
   constructor(
     private readonly platform: string,
@@ -78,6 +98,53 @@ export class OperationalHighAlertAudioController {
 
   get state(): OperationalHighAlertAudioState {
     return this.currentState;
+  }
+
+  get toneId(): string {
+    return this.tone.id;
+  }
+
+  setTone(toneId: string): string {
+    const next = resolveAlertTone(toneId);
+    if (next.id === this.tone.id) return next.id;
+    this.tone = next;
+    if (this.timer) {
+      this.stopRepeating();
+      this.syncTimer();
+    }
+    return next.id;
+  }
+
+  async testAlert(cycles = 3): Promise<void> {
+    if (!isOperationalHighAlertAudioSupported(this.platform)) {
+      this.reportUnavailable();
+      throw new Error('Operational alert sound is unsupported on this platform.');
+    }
+    if (!this.preferenceEnabled) throw new Error('Alert sound is muted.');
+    const context = this.getContext();
+    await context.resume();
+    if (context.state !== 'running' || !this.preferenceEnabled) {
+      if (this.activeOperationalIds.size > 0) this.requireActivation();
+      throw new Error('Alert sound requires browser activation.');
+    }
+    // With a live High Alert the repeating alarm is the test; scheduling extra cycles would overlap it.
+    if (this.activeOperationalIds.size > 0) {
+      if (!this.unlocked || !this.timer) this.onContextUnlocked();
+      return;
+    }
+    this.unlocked = true;
+    this.activationRequired = false;
+    for (let cycle = 0; cycle < cycles; cycle += 1) {
+      scheduleAlertTone(context, this.tone, oscillator => this.trackOscillator(oscillator), (cycle * this.tone.repeatMs) / 1000);
+    }
+  }
+
+  stopTest(): void {
+    if (this.activeOperationalIds.size === 0) this.stopCurrentTones();
+  }
+
+  testDurationMs(cycles = 3): number {
+    return ((cycles - 1) * this.tone.repeatMs) + (getAlertToneLengthSec(this.tone) * 1000);
   }
 
   setEnabled(enabled: boolean, attemptPlayback = true): void {
@@ -253,7 +320,7 @@ export class OperationalHighAlertAudioController {
       && this.context?.state === 'running'
       && this.activeOperationalIds.size > 0;
     if (shouldRepeat && !this.timer) {
-      this.timer = setInterval(() => this.playToneSafely(), 1500);
+      this.timer = setInterval(() => this.playToneSafely(), this.tone.repeatMs);
     } else if (!shouldRepeat) {
       this.stopRepeating();
     }
@@ -293,18 +360,11 @@ export class OperationalHighAlertAudioController {
       throw new Error('Alert audio context is not running.');
     }
 
-    const oscillator = this.context.createOscillator();
-    const gain = this.context.createGain();
-    const start = this.context.currentTime;
+    scheduleAlertTone(this.context, this.tone, oscillator => this.trackOscillator(oscillator));
+  }
+
+  private trackOscillator(oscillator: OscillatorNode): void {
     this.oscillators.add(oscillator);
     oscillator.onended = () => this.oscillators.delete(oscillator);
-    oscillator.frequency.setValueAtTime(880, start);
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.16, start + 0.025);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.24);
-    oscillator.connect(gain);
-    gain.connect(this.context.destination);
-    oscillator.start(start);
-    oscillator.stop(start + 0.25);
   }
 }

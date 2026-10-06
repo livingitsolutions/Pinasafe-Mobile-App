@@ -45,12 +45,13 @@ export function Select<T extends string>({ value, options, onChange, label }: { 
 
 const statusTone: Record<string, { bg: string; fg: string }> = {
   pending: { bg: colors.warningSoft, fg: colors.warning }, dispatched: { bg: colors.infoSoft, fg: colors.info },
-  responding: { bg: '#EEF4FF', fg: '#3538CD' }, resolved: { bg: colors.successSoft, fg: colors.success },
+  responding: { bg: colors.respondingSoft, fg: colors.responding }, resolved: { bg: colors.successSoft, fg: colors.success },
   active: { bg: colors.successSoft, fg: colors.success }, inactive: { bg: colors.surfaceAlt, fg: colors.muted }
 };
-export function StatusBadge({ value }: { value: string }) { const tone = statusTone[value.toLowerCase()] || statusTone.inactive; return <View style={[styles.badge, { backgroundColor: tone.bg }]}><View style={[styles.dot, { backgroundColor: tone.fg }]} /><Text style={[styles.badgeText, { color: tone.fg }]}>{value.replace('_', ' ')}</Text></View>; }
-export function TypeBadge({ value }: { value: string }) { return <View style={styles.typeBadge}><Text style={styles.typeBadgeText}>{value === 'fire' ? 'Fire' : value === 'road' ? 'Road incident' : value}</Text></View>; }
-export function Priority({ value }: { value: string }) { const critical = value === 'critical' || value === 'high'; return <View style={styles.priority}><View style={[styles.priorityBar, { backgroundColor: critical ? colors.critical : value === 'medium' ? colors.warning : colors.success }]} /><Text style={styles.label}>{value}</Text></View>; }
+function humanize(value: string) { const text = value.replace(/_/g, ' ').trim(); return text ? text.charAt(0).toUpperCase() + text.slice(1) : text; }
+export function StatusBadge({ value }: { value: string }) { const tone = statusTone[value.toLowerCase()] || statusTone.inactive; const label = humanize(value); return <View accessible accessibilityLabel={`Status: ${label}`} style={[styles.badge, { backgroundColor: tone.bg }]}><View style={[styles.dot, { backgroundColor: tone.fg }]} /><Text style={[styles.badgeText, { color: tone.fg }]}>{label}</Text></View>; }
+export function TypeBadge({ value }: { value: string }) { const label = value === 'fire' ? 'Fire' : value === 'road' ? 'Road incident' : humanize(value); return <View accessible accessibilityLabel={`Incident type: ${label}`} style={styles.typeBadge}><Text style={styles.typeBadgeText}>{label}</Text></View>; }
+export function Priority({ value }: { value: string }) { const critical = value === 'critical' || value === 'high'; const label = humanize(value); return <View accessible accessibilityLabel={`Priority: ${label}`} style={styles.priority}><View style={[styles.priorityBar, { backgroundColor: critical ? colors.critical : value === 'medium' ? colors.warning : colors.success }]} /><Text style={styles.label}>{label} priority</Text></View>; }
 
 export function Banner({ title, message, tone = 'info', action }: { title: string; message?: string; tone?: 'info' | 'warning' | 'error' | 'success'; action?: ReactNode }) {
   const palette = tone === 'error' ? [colors.criticalSoft, colors.critical] : tone === 'warning' ? [colors.warningSoft, colors.warning] : tone === 'success' ? [colors.successSoft, colors.success] : [colors.infoSoft, colors.info];
@@ -59,7 +60,7 @@ export function Banner({ title, message, tone = 'info', action }: { title: strin
 
 export function EmptyState({ title, message, action }: { title: string; message: string; action?: ReactNode }) { return <Card style={styles.state}><View style={styles.stateIcon}><Inbox size={26} color={colors.muted} /></View><Text style={styles.sectionTitle}>{title}</Text><Text style={styles.stateMessage}>{message}</Text>{action}</Card>; }
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) { return <Banner title="Something went wrong" message={message} tone="error" action={onRetry ? <View style={styles.bannerAction}><Button label="Try again" variant="secondary" onPress={onRetry} /></View> : undefined} />; }
-export function LoadingState({ rows = 3 }: { rows?: number }) { return <View accessibilityLabel="Loading content" style={styles.skeletonGroup}>{Array.from({ length: rows }).map((_, i) => <View key={i} style={[styles.skeleton, { opacity: 1 - i * .15 }]} />)}</View>; }
+export function LoadingState({ rows = 3, label = 'Loading…' }: { rows?: number; label?: string }) { return <View accessibilityRole="progressbar" accessibilityLabel={label} style={styles.skeletonGroup}><Text style={styles.stateMessage}>{label}</Text>{Array.from({ length: rows }).map((_, i) => <View key={i} style={[styles.skeleton, { opacity: 1 - i * .15 }]} />)}</View>; }
 
 export function ListRow({ title, subtitle, leading, trailing, onPress }: { title: string; subtitle?: string; leading?: ReactNode; trailing?: ReactNode; onPress?: () => void }) {
   const content = <><View style={styles.rowLeading}>{leading}</View><View style={styles.rowCopy}><Text style={styles.rowTitle}>{title}</Text>{subtitle ? <Text numberOfLines={2} style={styles.caption}>{subtitle}</Text> : null}</View>{trailing || (onPress ? <ChevronRight size={18} color={colors.subtle} /> : null)}</>;

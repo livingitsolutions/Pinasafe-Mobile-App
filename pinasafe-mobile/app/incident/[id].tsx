@@ -8,6 +8,7 @@ import { ActionBar, Banner, Button, Card, DetailItem, EmptyState, ErrorState, Ic
 import OperationalIncidentDetail from '@/components/OperationalIncidentDetail';
 import CitizenResponseTracking from '@/components/CitizenResponseTracking';
 import { getEmergencyReportMapUrl } from '@/utils/mapUrl';
+import { navigateBackFromIncident } from '@/utils/incidentNavigation';
 import { colors, radius, space, type } from '@/theme/tokens';
 
 type Report = {
@@ -76,13 +77,15 @@ export default function IncidentDetail() {
     } finally { setActionLoading(false); }
   };
 
-  if (loading) return <Screen><PageHeader eyebrow="Incident record" title="Loading incident" /><LoadingState rows={4} /></Screen>;
-  if (error && !report) return <Screen><PageHeader title="Incident unavailable" action={<IconButton label="Go back" onPress={router.back}><ArrowLeft size={20} color={colors.ink} /></IconButton>} /><ErrorState message={error} onRetry={load} /></Screen>;
+  const backAction = <IconButton label="Go back" onPress={() => { navigateBackFromIncident(router, user?.role); }}><ArrowLeft size={20} color={colors.ink} /></IconButton>;
+
+  if (loading) return <Screen><PageHeader eyebrow="Incident record" title="Loading incident" action={backAction} /><LoadingState rows={4} /></Screen>;
+  if (error && !report) return <Screen><PageHeader title="Incident unavailable" action={backAction} /><ErrorState message={error} onRetry={load} /></Screen>;
   if (report && isAdmin) return <OperationalIncidentDetail report={report} role={user?.role} routeId={id} />;
-  if (!report) return <Screen><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
+  if (!report) return <Screen><PageHeader eyebrow="Incident record" title="Incident not found" action={backAction} /><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
 
   return <Screen>
-    <PageHeader eyebrow="Incident detail" title={report.type === 'fire' ? 'Fire incident' : 'Road incident'} description={`Reference ${report.id.slice(0, 8).toUpperCase()}`} action={<IconButton label="Go back" onPress={router.back}><ArrowLeft size={20} color={colors.ink} /></IconButton>} />
+    <PageHeader eyebrow="Incident detail" title={report.type === 'fire' ? 'Fire incident' : 'Road incident'} description={`Reference ${report.id.slice(0, 8).toUpperCase()}`} action={backAction} />
     {error ? <Banner title="Action needs attention" message={error} tone="warning" /> : null}
     <Card tone={report.priority === 'critical' ? 'critical' : 'default'}>
       <View style={styles.badges}><TypeBadge value={report.type} /><StatusBadge value={report.status} /><Priority value={report.priority} /></View>

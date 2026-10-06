@@ -5,6 +5,11 @@ import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
+import { useEffect } from 'react';
+import { Platform, View } from 'react-native';
+import ConnectivityBanner from '@/components/ConnectivityBanner';
+import { InstallPromptProvider } from '@/contexts/InstallPromptContext';
+import { registerServiceWorker } from '@/utils/pwaRegistration';
 
 export default function RootLayout() {
   useFrameworkReady();
@@ -14,11 +19,18 @@ export default function RootLayout() {
     'Quicksand-Bold': require('@/assets/fonts/Quicksand-Bold.ttf'),
   });
 
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') void registerServiceWorker(window, !__DEV__);
+  }, []);
+
   if (!fontsLoaded) return null;
 
   return (
     <AuthProvider>
       <EmergencyProvider>
+        <InstallPromptProvider>
+        <View style={{ flex: 1 }}>
+        <ConnectivityBanner />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(auth)" />
           <Stack.Screen name="(tabs-citizen)" />
@@ -29,7 +41,9 @@ export default function RootLayout() {
           <Stack.Screen name="incident/[id]" />
           <Stack.Screen name="+not-found" />
         </Stack>
+        </View>
         <StatusBar style="auto" />
+        </InstallPromptProvider>
       </EmergencyProvider>
     </AuthProvider>
   );

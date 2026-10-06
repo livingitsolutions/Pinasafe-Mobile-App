@@ -9,6 +9,7 @@ import { isTeamPresentationReady } from '@/utils/operations';
 import { Banner, Button, Dialog, EmptyState, ErrorState, IconButton, LoadingState, PageHeader, Screen, Section } from '@/components/ui';
 import { MemberEvidenceState, OperationalIncidentHeader, OperationalMemberSection } from '@/components/OperationalIncident';
 import ResponderLocationPanel from '@/components/ResponderLocationPanel';
+import { navigateBackFromIncident } from '@/utils/incidentNavigation';
 import { colors, radius, space, type } from '@/theme/tokens';
 import type { OperationalCluster } from '@/types/operationalCluster';
 import {
@@ -124,11 +125,13 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
   const trackedMembers = useMemo(() => members.filter(member => member.assigned_team_id), [members]);
   const openMap = (url: string) => { void Linking.openURL(url); };
 
-  if (loading && !cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Loading incident" /><LoadingState rows={4} /></Screen>;
-  if (!cluster) return <Screen><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
+  const backAction = <IconButton label="Go back" onPress={() => { navigateBackFromIncident(router, role); }}><ArrowLeft size={20} color={colors.ink} /></IconButton>;
+
+  if (loading && !cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Loading incident" action={backAction} /><LoadingState rows={4} /></Screen>;
+  if (!cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Incident not found" action={backAction} /><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
 
   return <Screen>
-    <PageHeader eyebrow="Operational incident" title={cluster.type === 'fire' ? 'Fire incident' : cluster.type === 'road' ? 'Road incident' : 'Incident'} description={`Reference ${(cluster.clusterId ?? cluster.operationalId).slice(0, 8).toUpperCase()}`} action={<IconButton label="Go back" onPress={router.back}><ArrowLeft size={20} color={colors.ink} /></IconButton>} />
+    <PageHeader eyebrow="Operational incident" title={cluster.type === 'fire' ? 'Fire incident' : cluster.type === 'road' ? 'Road incident' : 'Incident'} description={`Reference ${(cluster.clusterId ?? cluster.operationalId).slice(0, 8).toUpperCase()}`} action={backAction} />
     {summaryError ? <Banner title="Operational summary" message={summaryError} tone="warning" action={<Button variant="secondary" label="Retry" onPress={load} />} /> : null}
     <OperationalIncidentHeader cluster={cluster} onOpenMap={openMap} />
     {hasOperationalAssignment ? <Banner title="Response team assigned" message="A response team is assigned to this operational incident. Each report keeps its own status and evidence." tone="info" /> : null}

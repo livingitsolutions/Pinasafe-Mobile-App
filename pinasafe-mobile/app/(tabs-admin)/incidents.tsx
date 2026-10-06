@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/apiService';
 import { Button, Banner, Card, EmptyState, LoadingState, PageHeader, Screen, Section } from '@/components/ui';
 import { OperationalIncidentCard } from '@/components/OperationalIncident';
+import HighAlertSoundSettings from '@/components/HighAlertSoundSettings';
 import { colors, radius, space, type } from '@/theme/tokens';
 import type { OperationalCluster } from '@/types/operationalCluster';
 import { OPERATIONAL_FILTERS, OperationalFilter, filterOperationalClusters, getNavigationTargetId } from '@/utils/operationalCluster';
@@ -13,10 +14,13 @@ import {
   OperationalHighAlertAudioController,
   getActiveOperationalAlertIds,
   readOperationalHighAlertAudioPreference,
+  readOperationalHighAlertTone,
   saveOperationalHighAlertAudioPreference,
+  saveOperationalHighAlertTone,
   type OperationalHighAlertAudioState,
 } from '@/utils/operationalHighAlert';
 import { OperationalQueueCoordinator } from '@/utils/operationalQueueCoordinator';
+import { DEFAULT_ALERT_TONE_ID, resolveAlertTone } from '@/utils/alertTones';
 
 const REFRESH_INTERVAL_MS = 10000;
 
@@ -30,6 +34,8 @@ export default function AdminIncidents() {
   const [soundState, setSoundState] = useState<OperationalHighAlertAudioState>('enabled');
   const [soundBusy, setSoundBusy] = useState(false);
   const [soundError, setSoundError] = useState('');
+  const [toneId, setToneId] = useState(DEFAULT_ALERT_TONE_ID);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const queueCoordinatorRef = useRef<OperationalQueueCoordinator | null>(null);
   const audioSupported = isOperationalHighAlertAudioSupported(Platform.OS);
   const audioControllerRef = useRef<OperationalHighAlertAudioController | null>(null);
@@ -53,6 +59,27 @@ export default function AdminIncidents() {
       setSoundError('The alert sound preference could not be read; sound is enabled for this session.');
     }
   }, []);
+
+  const userId = user?.id;
+  useEffect(() => {
+    let stored = DEFAULT_ALERT_TONE_ID;
+    try {
+      stored = readOperationalHighAlertTone(userId);
+    } catch {
+      stored = DEFAULT_ALERT_TONE_ID;
+    }
+    setToneId(audioControllerRef.current?.setTone(stored) ?? stored);
+  }, [userId]);
+
+  const selectTone = useCallback((nextToneId: string) => {
+    const applied = audioControllerRef.current?.setTone(nextToneId) ?? resolveAlertTone(nextToneId, 'command-center').id;
+    setToneId(applied);
+    try {
+      saveOperationalHighAlertTone(userId, applied);
+    } catch {
+      setSoundError('The alert tone could not be saved. The selected tone applies only for this session.');
+    }
+  }, [userId]);
 
   const load = useCallback(async () => {
     await queueCoordinatorRef.current?.load();
@@ -156,7 +183,20 @@ export default function AdminIncidents() {
             loading={soundBusy}
           />
         : <Button variant="secondary" label="Alert sound unavailable on this platform" onPress={() => {}} disabled />}
+      {audioSupported ? <Button variant="quiet" label={`Sound settings · ${resolveAlertTone(toneId).name}`} onPress={() => setSettingsOpen(true)} /> : null}
     </View>
+    {settingsOpen ? <HighAlertSoundSettings
+      visible
+      onClose={() => setSettingsOpen(false)}
+      audioSupported={audioSupported}
+      soundEnabled={soundEnabled}
+      soundBusy={soundBusy}
+      soundState={soundState}
+      selectedToneId={toneId}
+      controller={audioControllerRef.current}
+      onToggleSound={enabled => { void changeSoundPreference(enabled, enabled); }}
+      onSelectTone={selectTone}
+    /> : null}
     {soundError ? <Banner title="Alert sound unavailable" message={soundError} tone="error" /> : null}
     <View accessibilityRole="tablist" style={styles.filters}>{OPERATIONAL_FILTERS.map(value => <Pressable key={value} accessibilityRole="tab" accessibilityState={{ selected: filter === value }} onPress={() => setFilter(value)} style={[styles.filter, filter === value && styles.filterActive]}><Text style={[styles.filterText, filter === value && styles.filterTextActive]}>{value}</Text></Pressable>)}</View>
     {error ? <Banner title="Queue unavailable" message={error} tone="error" action={<Button variant="secondary" label="Retry" onPress={load} />} /> : null}

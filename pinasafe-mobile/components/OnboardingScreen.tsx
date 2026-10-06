@@ -5,9 +5,9 @@ import { Button, Card, Screen } from '@/components/ui';
 import { colors, radius, space, type } from '@/theme/tokens';
 
 const pages = [
-  { icon: ShieldCheck, title: 'Report with confidence', body: 'PinaSafe supports road and fire incident reporting with an explicit review before submission.' },
-  { icon: Camera, title: 'Capture live evidence', body: 'Evidence comes from the live camera and is classified securely by the server. Rejected images can be retaken.' },
-  { icon: MapPin, title: 'Follow verified status', body: 'Track the incident lifecycle without invented distance, arrival time, or fallback coordinates.' }
+  { icon: ShieldCheck, title: 'Report with confidence', body: 'Report road and fire incidents in a few steps, with a final review before anything is sent.' },
+  { icon: Camera, title: 'Capture live evidence', body: 'Take a photo with your camera so responders can see what is happening. If a photo cannot be used, you can retake it.' },
+  { icon: MapPin, title: 'Follow your report', body: 'See when your report is reviewed and dispatched. When a team is on the way, you can follow their live location and estimated arrival.' }
 ];
 export default function OnboardingScreen({ onComplete }: { onComplete: () => void }) {
   const [index, setIndex] = useState(0);

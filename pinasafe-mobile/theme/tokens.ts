@@ -8,6 +8,7 @@ export const colors = {
   success: '#067647', successSoft: '#ECFDF3',
   warning: '#B54708', warningSoft: '#FFFAEB',
   info: '#175CD3', infoSoft: '#EFF8FF',
+  responding: '#0E7090', respondingSoft: '#ECFDFF',
   critical: '#B42318', criticalSoft: '#FEF3F2', white: '#FFFFFF'
 } as const;
 

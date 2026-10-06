@@ -27,7 +27,12 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./public/icons/favicon-48.png",
+      "name": "PinaSafe",
+      "shortName": "PinaSafe",
+      "themeColor": "#B42318",
+      "backgroundColor": "#F7F7F5",
+      "display": "standalone"
     },
     "plugins": [
       "expo-router"
