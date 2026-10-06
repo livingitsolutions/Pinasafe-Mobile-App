@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatResponseTime, getOperationalResolutionDisplayTimestamp } from '@/utils/responseTiming';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { MapPin, ShieldCheck } from 'lucide-react-native';
 import { Banner, Button, Card, EmptyState, ErrorState, ListRow, Priority, StatusBadge, TypeBadge } from '@/components/ui';
@@ -71,6 +72,8 @@ export function OperationalIncidentCard({ cluster, onOpen, onOpenMap, isAdmin = 
 
 export function OperationalIncidentHeader({ cluster, onOpenMap }: { cluster: OperationalCluster; onOpenMap: (url: string) => void }) {
   const location = getOperationalLocation(cluster);
+  const resolvedTimestamp = getOperationalResolutionDisplayTimestamp(cluster);
+  const responseTime = formatResponseTime(cluster.firstReportedAt, resolvedTimestamp);
 
   return <Card tone={cluster.priority === 'critical' ? 'critical' : 'default'}>
     <View style={styles.badges}>
@@ -84,6 +87,8 @@ export function OperationalIncidentHeader({ cluster, onOpenMap }: { cluster: Ope
     <View style={styles.times}>
       <Text style={styles.caption}>First reported {formatOperationalTime(cluster.firstReportedAt)}</Text>
       <Text style={styles.caption}>Latest report {formatOperationalTime(cluster.latestReportedAt)}</Text>
+      {resolvedTimestamp ? <Text style={styles.caption}>Resolved {formatOperationalTime(resolvedTimestamp)}</Text> : null}
+      {responseTime ? <Text style={styles.caption}>Response time {responseTime}</Text> : null}
     </View>
     {location.mapUrl
       ? <Button variant="secondary" label="Open location in maps" onPress={() => onOpenMap(location.mapUrl as string)} icon={<MapPin size={18} color={colors.ink} />} />

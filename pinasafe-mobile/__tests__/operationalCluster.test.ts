@@ -28,6 +28,15 @@ const cluster = (overrides: Partial<OperationalCluster> = {}): OperationalCluste
 });
 
 describe('operational cluster helpers', () => {
+  test('single-report operational fallback preserves the supplied timing fields', () => {
+    const report = { id: 'r-1', status: 'resolved', created_at: '2026-10-07T06:23:34.000Z',
+      resolved_at: '2026-10-07T06:38:49.000Z', updated_at: '2026-10-07T07:00:00.000Z' };
+    const result = buildSingleReportOperational(report);
+    expect(result.firstReportedAt).toBe(report.created_at);
+    expect(result.latestReportedAt).toBe(report.created_at);
+    expect(result.memberReports[0]).toMatchObject(report);
+  });
+
   test('report count copy', () => {
     expect(formatReportCount(1)).toBe('1 Report');
     expect(formatReportCount(2)).toBe('2 Reports');

@@ -17,6 +17,8 @@ export interface OperationalMemberReport {
   priority: string | null;
   status: string | null;
   created_at: string | null;
+  resolved_at?: string | null;
+  updated_at?: string | null;
   coordinates: OperationalCoordinates | null;
 }
 

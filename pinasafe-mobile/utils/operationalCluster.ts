@@ -73,6 +73,8 @@ export type SingleReportSource = {
   priority?: string | null;
   status?: string | null;
   created_at?: string | null;
+  resolved_at?: string | null;
+  updated_at?: string | null;
   assigned_team_id?: string | null;
   organization_id?: string | null;
   coordinates?: { latitude: number; longitude: number } | null;
@@ -116,6 +118,8 @@ export function buildSingleReportOperational(report: SingleReportSource): Operat
       priority: report.priority ?? null,
       status: report.status ?? null,
       created_at: report.created_at ?? null,
+      resolved_at: report.resolved_at ?? null,
+      updated_at: report.updated_at ?? null,
       coordinates,
     }],
   };
