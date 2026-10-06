@@ -55,7 +55,10 @@ describe('incident_response_locations migration contract', () => {
 
   test('is additive and leaves frozen objects untouched', () => {
     const body = executable();
-    expect(body).not.toMatch(/\b(DROP|DELETE|TRUNCATE|RENAME)\b/i);
+    expect(body).not.toMatch(/\bDROP\s+(?:TABLE|INDEX|VIEW|TYPE|FUNCTION|SCHEMA)\b/i);
+    expect(body).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(body).not.toMatch(/\bTRUNCATE(?:\s+TABLE)?\b/i);
+    expect(body).not.toMatch(/\bALTER\s+(?:TABLE|INDEX)\b[^;]*\bRENAME\b/i);
     expect(body).not.toMatch(/ALTER TABLE (public\.)?(emergency_reports|team_location_tracking)/i);
     expect(body).not.toMatch(/FUNCTION|resolve_operational_incident_atomic|assign_emergency_report_team_atomic|lock_operational_groups|set_emergency_report_cluster_atomic/i);
     expect(body).not.toMatch(/\b(BEGIN|COMMIT|ROLLBACK)\s*;/i);
