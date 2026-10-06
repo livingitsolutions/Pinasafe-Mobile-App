@@ -109,7 +109,7 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
     }
     catch (cause) {
       if (!mountedRef.current || currentRouteIdRef.current !== initiatingRouteId) return;
-      if (isApiError(cause) && cause.status === 409) { setMessage('Incident or team readiness changed. The incident was refreshed; review before trying again.'); await loadRef.current(); }
+      if (isApiError(cause) && cause.status === 409) { setMessage(cause.message || 'Incident or team readiness changed. The incident was refreshed; review before trying again.'); await loadRef.current(); }
       else if (isApiError(cause) && cause.status === 403) setMessage('You are not authorized to dispatch this incident.');
       else setMessage(isApiError(cause) ? cause.message : 'Dispatch failed.');
     } finally {
@@ -119,6 +119,7 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
   };
 
   const members = useMemo(() => (cluster ? getScopedMembers(cluster) : []), [cluster]);
+  const hasOperationalAssignment = Boolean(cluster?.assignedTeams.length);
   const openMap = (url: string) => { void Linking.openURL(url); };
 
   if (loading && !cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Loading incident" /><LoadingState rows={4} /></Screen>;
@@ -128,13 +129,14 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
     <PageHeader eyebrow="Operational incident" title={cluster.type === 'fire' ? 'Fire incident' : cluster.type === 'road' ? 'Road incident' : 'Incident'} description={`Reference ${(cluster.clusterId ?? cluster.operationalId).slice(0, 8).toUpperCase()}`} action={<IconButton label="Go back" onPress={router.back}><ArrowLeft size={20} color={colors.ink} /></IconButton>} />
     {summaryError ? <Banner title="Operational summary" message={summaryError} tone="warning" action={<Button variant="secondary" label="Retry" onPress={load} />} /> : null}
     <OperationalIncidentHeader cluster={cluster} onOpenMap={openMap} />
+    {hasOperationalAssignment ? <Banner title="Response team assigned" message="A response team is assigned to this operational incident. Each report keeps its own status and evidence." tone="info" /> : null}
     <Section title="Reports" description="Each report remains independent. Dispatch applies to a single report only.">
       {members.length === 0 ? <ErrorState message="No reports are available for this incident." onRetry={load} /> : members.map((member, index) => <OperationalMemberSection
         key={member.id}
         member={member}
         index={index}
         evidence={evidence[member.id]}
-        canDispatch={canDispatchMember(member, role)}
+        canDispatch={!hasOperationalAssignment && canDispatchMember(member, role)}
         onDispatch={() => openDispatch(member.id)}
         onOpenReport={member.id !== report.id ? () => router.push(`/incident/${member.id}`) : undefined}
       />)}

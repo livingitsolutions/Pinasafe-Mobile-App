@@ -1,11 +1,66 @@
 const express = require('express');
 const { getClient } = require('../config/database');
-const { authenticateToken, requireRole, canAccessOrganization } = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 const { validateUUID, validateClusterUpdate } = require('../middleware/validation');
 const clusteringService = require('../services/incidentClusteringService');
 const safeLogger = require('../utils/safeLogger');
 
 const router = express.Router();
+
+const getClusterAccessScope = async (clusterId, user) => {
+  const supabase = getClient();
+  let reportsQuery = supabase
+    .from('emergency_reports')
+    .select('id, organization_id, reported_by')
+    .eq('cluster_id', clusterId);
+
+  if (user.role === 'citizen') {
+    reportsQuery = reportsQuery.eq('reported_by', user.id);
+  } else {
+    if (!user.organization_id) {
+      return { error: 'User not assigned to an organization', status: 400 };
+    }
+    reportsQuery = reportsQuery.eq('organization_id', user.organization_id);
+  }
+
+  const { data: reports, error: reportsError } = await reportsQuery;
+  if (reportsError) throw reportsError;
+  const authorizedReports = (reports || []).filter((report) => (
+    user.role === 'citizen'
+      ? report.reported_by === user.id
+      : report.organization_id === user.organization_id
+  ));
+  if (!authorizedReports.length) {
+    return {
+      error: user.role === 'citizen'
+        ? 'Access denied to this cluster'
+        : 'Access denied for this organization',
+      status: 403
+    };
+  }
+
+  if (user.role === 'citizen') {
+    const { data: subscription, error: subscriptionError } = await supabase
+      .from('incident_cluster_subscribers')
+      .select('user_id, incident_id')
+      .eq('cluster_id', clusterId)
+      .eq('user_id', user.id)
+      .in('incident_id', authorizedReports.map((report) => report.id))
+      .maybeSingle();
+
+    if (subscriptionError) throw subscriptionError;
+    if (
+      !subscription
+      || subscription.user_id !== user.id
+      || !authorizedReports.some((report) => report.id === subscription.incident_id)
+    ) {
+      return { error: 'Access denied to this cluster', status: 403 };
+    }
+    return { scope: { userId: user.id } };
+  }
+
+  return { scope: { organizationId: user.organization_id } };
+};
 
 router.get('/my-clusters', authenticateToken, async (req, res) => {
   try {
@@ -13,7 +68,9 @@ router.get('/my-clusters', authenticateToken, async (req, res) => {
 
     const clustersWithInfo = await Promise.all(
       clusters.map(async (sub) => {
-        const info = await clusteringService.getClusterInfo(sub.cluster_id);
+        const info = await clusteringService.getClusterInfo(sub.cluster_id, {
+          userId: req.user.id
+        });
         return {
           cluster_id: sub.cluster_id,
           subscribed_at: sub.subscribed_at,
@@ -83,36 +140,10 @@ router.get('/:clusterId/info', authenticateToken, validateUUID('clusterId'), asy
     const { clusterId } = req.params;
     const { user } = req;
 
-    const supabase = getClient();
-    const { data: subscription } = await supabase
-      .from('incident_cluster_subscribers')
-      .select('user_id')
-      .eq('cluster_id', clusterId)
-      .eq('user_id', user.id)
-      .maybeSingle();
+    const access = await getClusterAccessScope(clusterId, user);
+    if (access.error) return res.status(access.status).json({ error: access.error });
 
-    if (user.role === 'citizen') {
-      if (!subscription) {
-        return res.status(403).json({ error: 'Access denied to this cluster' });
-      }
-    } else {
-      if (!user.organization_id) {
-        return res.status(400).json({ error: 'User not assigned to an organization' });
-      }
-
-      const { data: orgReports } = await supabase
-        .from('emergency_reports')
-        .select('id')
-        .eq('cluster_id', clusterId)
-        .eq('organization_id', user.organization_id)
-        .limit(1);
-
-      if (!orgReports || orgReports.length === 0) {
-        return res.status(403).json({ error: 'Access denied for this organization' });
-      }
-    }
-
-    const clusterInfo = await clusteringService.getClusterInfo(clusterId);
+    const clusterInfo = await clusteringService.getClusterInfo(clusterId, access.scope);
     res.json({ data: clusterInfo });
   } catch (error) {
     safeLogger.error('clusters.info_failed');
@@ -125,36 +156,10 @@ router.get('/:clusterId/updates', authenticateToken, validateUUID('clusterId'), 
     const { clusterId } = req.params;
     const { user } = req;
 
-    const supabase = getClient();
-    const { data: subscription } = await supabase
-      .from('incident_cluster_subscribers')
-      .select('user_id')
-      .eq('cluster_id', clusterId)
-      .eq('user_id', user.id)
-      .maybeSingle();
+    const access = await getClusterAccessScope(clusterId, user);
+    if (access.error) return res.status(access.status).json({ error: access.error });
 
-    if (user.role === 'citizen') {
-      if (!subscription) {
-        return res.status(403).json({ error: 'Access denied to this cluster' });
-      }
-    } else {
-      if (!user.organization_id) {
-        return res.status(400).json({ error: 'User not assigned to an organization' });
-      }
-
-      const { data: orgReports } = await supabase
-        .from('emergency_reports')
-        .select('id')
-        .eq('cluster_id', clusterId)
-        .eq('organization_id', user.organization_id)
-        .limit(1);
-
-      if (!orgReports || orgReports.length === 0) {
-        return res.status(403).json({ error: 'Access denied for this organization' });
-      }
-    }
-
-    const updates = await clusteringService.getClusterUpdates(clusterId);
+    const updates = await clusteringService.getClusterUpdates(clusterId, access.scope);
     res.json({ data: updates });
   } catch (error) {
     safeLogger.error('clusters.updates_failed');
@@ -181,23 +186,15 @@ router.post('/:clusterId/updates', authenticateToken, requireRole(['responder', 
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    const supabase = getClient();
-    const { data: orgReports } = await supabase
-      .from('emergency_reports')
-      .select('id')
-      .eq('cluster_id', clusterId)
-      .eq('organization_id', user.organization_id)
-      .limit(1);
-
-    if (!orgReports || orgReports.length === 0) {
-      return res.status(403).json({ error: 'Access denied for this organization' });
-    }
+    const access = await getClusterAccessScope(clusterId, user);
+    if (access.error) return res.status(access.status).json({ error: access.error });
 
     const result = await clusteringService.notifyClusterSubscribers(
       clusterId,
       message,
       status,
-      user.id
+      user.id,
+      user.organization_id
     );
 
     res.status(201).json({

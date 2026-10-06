@@ -60,6 +60,7 @@ const requestBody = (overrides = {}) => ({
 const persistedReport = (overrides = {}) => ({
   id: REPORT_ID,
   reported_by: REPORTER_ID,
+  organization_id: 'organization-1',
   type: 'road',
   title: 'Road Emergency',
   description: 'A valid emergency description',
@@ -243,7 +244,11 @@ describe('POST /api/emergency-reports B4 integration', () => {
     expect(response.status).toBe(201);
     expect(response.body.data.id).toBe(REPORT_ID);
     expect(clusteringService.findMatchingCluster).toHaveBeenCalledWith(report);
-    expect(clusteringService.createCluster).toHaveBeenCalledWith(REPORT_ID, REPORTER_ID);
+    expect(clusteringService.createCluster).toHaveBeenCalledWith(
+      REPORT_ID,
+      REPORTER_ID,
+      'organization-1'
+    );
   });
 
   test('returns the fetched report for REPLAYED without repeating completed clustering', async () => {
@@ -442,14 +447,33 @@ describe('POST /api/emergency-reports B4 integration', () => {
     expect(clusteringService.addToCluster).toHaveBeenCalledWith(
       'cluster-match',
       REPORT_ID,
-      REPORTER_ID
+      REPORTER_ID,
+      'organization-1'
     );
     expect(clusteringService.notifyClusterSubscribers).toHaveBeenCalledWith(
       'cluster-match',
       'New road incident reported in A valid incident location',
       'pending',
-      REPORTER_ID
+      REPORTER_ID,
+      'organization-1'
     );
+  });
+
+  test('keeps a report unclustered when atomic membership would merge assigned groups', async () => {
+    const report = persistedReport();
+    setupReportFetch(report);
+    clusteringService.findMatchingCluster.mockResolvedValue('assigned-cluster');
+    clusteringService.addToCluster.mockRejectedValue(Object.assign(
+      new Error('Operational cluster membership was not changed'),
+      { code: 'assignment_conflict' }
+    ));
+
+    const response = await postReport(requestBody());
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.cluster_id).toBeNull();
+    expect(response.body.data.status).toBe('pending');
+    expect(clusteringService.notifyClusterSubscribers).not.toHaveBeenCalled();
   });
 
   test('keeps clustering failures from failing report creation', async () => {

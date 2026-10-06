@@ -33,9 +33,11 @@ const responder = { id: 'responder-1', role: 'responder', organization_id: ORG_I
 const buildQuery = (payload) => ({
   select: jest.fn().mockReturnThis(),
   eq: jest.fn().mockReturnThis(),
+  in: jest.fn().mockReturnThis(),
   update: jest.fn().mockReturnThis(),
   maybeSingle: jest.fn().mockResolvedValue(payload),
-  limit: jest.fn().mockResolvedValue(payload)
+  limit: jest.fn().mockResolvedValue(payload),
+  then: (resolve, reject) => Promise.resolve(payload).then(resolve, reject)
 });
 
 const buildApp = (user) => {
@@ -60,6 +62,7 @@ describe('Cluster lifecycle bypass prevention', () => {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
       update: updateMock,
+      then: (resolve, reject) => Promise.resolve({ data: [{ id: 'report-1', organization_id: ORG_ID }], error: null }).then(resolve, reject),
       limit: jest.fn().mockResolvedValue({ data: [{ id: 'report-1' }], error: null })
     };
     const from = jest.fn(() => orgReportsQuery);
@@ -81,6 +84,7 @@ describe('Cluster lifecycle bypass prevention', () => {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
       update: updateMock,
+      then: (resolve, reject) => Promise.resolve({ data: [{ id: 'report-1', organization_id: ORG_ID }], error: null }).then(resolve, reject),
       limit: jest.fn().mockResolvedValue({ data: [{ id: 'report-1' }], error: null })
     };
     const from = jest.fn(() => orgReportsQuery);
@@ -97,6 +101,7 @@ describe('Cluster lifecycle bypass prevention', () => {
     const orgReportsQuery = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      then: (resolve, reject) => Promise.resolve({ data: [{ id: 'report-1', organization_id: ORG_ID }], error: null }).then(resolve, reject),
       limit: jest.fn().mockResolvedValue({ data: [{ id: 'report-1' }], error: null })
     };
     const from = jest.fn(() => orgReportsQuery);
@@ -114,6 +119,7 @@ describe('Cluster lifecycle bypass prevention', () => {
     const orgReportsQuery = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      then: (resolve, reject) => Promise.resolve({ data: [], error: null }).then(resolve, reject),
       limit: jest.fn().mockResolvedValue({ data: [], error: null })
     };
     const from = jest.fn(() => orgReportsQuery);
@@ -127,8 +133,8 @@ describe('Cluster lifecycle bypass prevention', () => {
   });
 
   test('cluster read remains denied to a citizen without an existing subscription', async () => {
-    const subscriptionQuery = buildQuery({ data: null, error: null });
-    getClient.mockReturnValue({ from: jest.fn(() => subscriptionQuery) });
+    const ownedReportsQuery = buildQuery({ data: [], error: null });
+    getClient.mockReturnValue({ from: jest.fn(() => ownedReportsQuery) });
 
     const response = await request(buildApp({
       id: 'citizen-1',
@@ -142,17 +148,58 @@ describe('Cluster lifecycle bypass prevention', () => {
   });
 
   test('cluster read remains denied to an operations user without a same-organization report', async () => {
-    const subscriptionQuery = buildQuery({ data: null, error: null });
     const organizationReportsQuery = buildQuery({ data: [], error: null });
     getClient.mockReturnValue({
       from: jest.fn()
-        .mockReturnValueOnce(subscriptionQuery)
         .mockReturnValueOnce(organizationReportsQuery)
     });
 
     const response = await request(buildApp(responder))
       .get(`/clusters/${CLUSTER_ID}/info`);
 
+    expect(response.status).toBe(403);
+    expect(require('../services/incidentClusteringService').getClusterInfo)
+      .not.toHaveBeenCalled();
+  });
+
+  test('cluster read rejects a malformed foreign-organization report row', async () => {
+    const organizationReportsQuery = buildQuery({
+      data: [{ id: 'foreign-report', organization_id: 'org-2', reported_by: 'citizen-2' }],
+      error: null
+    });
+    getClient.mockReturnValue({ from: jest.fn(() => organizationReportsQuery) });
+
+    const response = await request(buildApp(responder))
+      .get(`/clusters/${CLUSTER_ID}/info`);
+
+    expect(organizationReportsQuery.eq).toHaveBeenCalledWith('organization_id', ORG_ID);
+    expect(response.status).toBe(403);
+    expect(require('../services/incidentClusteringService').getClusterInfo)
+      .not.toHaveBeenCalled();
+  });
+
+  test('citizen cluster read requires a subscription to one of their own reports', async () => {
+    const ownedReportsQuery = buildQuery({
+      data: [{ id: 'owned-report', organization_id: 'org-1', reported_by: 'citizen-1' }],
+      error: null
+    });
+    const malformedSubscriptionQuery = buildQuery({
+      data: { user_id: 'citizen-1', incident_id: 'foreign-report' },
+      error: null
+    });
+    getClient.mockReturnValue({
+      from: jest.fn()
+        .mockReturnValueOnce(ownedReportsQuery)
+        .mockReturnValueOnce(malformedSubscriptionQuery)
+    });
+
+    const response = await request(buildApp({
+      id: 'citizen-1',
+      role: 'citizen',
+      organization_id: null
+    })).get(`/clusters/${CLUSTER_ID}/info`);
+
+    expect(malformedSubscriptionQuery.in).toHaveBeenCalledWith('incident_id', ['owned-report']);
     expect(response.status).toBe(403);
     expect(require('../services/incidentClusteringService').getClusterInfo)
       .not.toHaveBeenCalled();

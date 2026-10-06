@@ -50,14 +50,23 @@ const query = (payload) => ({
   limit: jest.fn().mockResolvedValue(payload)
 });
 
-const setupQueries = (queries) => {
+const setupQueries = (queries, rpcResponse = {
+  data: {
+    status: 'assigned',
+    report: reportWith({ status: 'dispatched', assigned_team_id: TEAM_ID })
+  },
+  error: null
+}) => {
   const remaining = [...queries];
   const from = jest.fn(() => {
     const next = remaining.shift();
     if (!next) throw new Error('Unexpected extra database query');
     return next;
   });
-  getClient.mockReturnValue({ from });
+  getClient.mockReturnValue({
+    from,
+    rpc: jest.fn().mockResolvedValue(rpcResponse)
+  });
   return from;
 };
 
@@ -235,7 +244,13 @@ describe('emergency report coordinate response contract', () => {
       query({ data: { id: TEAM_ID }, error: null }),
       query({ data: [{ id: 'personnel-1' }], error: null }),
       query({ data: reportWith({ status: 'dispatched', latitude: '90', longitude: '-180' }), error: null })
-    ]);
+    ], {
+      data: {
+        status: 'assigned',
+        report: reportWith({ status: 'dispatched', assigned_team_id: TEAM_ID, latitude: '90', longitude: '-180' })
+      },
+      error: null
+    });
 
     const response = await request(buildApp(admin))
       .post(`/emergency-reports/${REPORT_ID}/assign-team`)
