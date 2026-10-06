@@ -376,10 +376,97 @@ router.put('/:id', authenticateToken, requireRole(['responder']), validateUUID('
     }
 
     const expectedPreviousStatus = existingReport.status;
+
+    // Terminal resolution is operational-incident authoritative. A retry
+    // against an already-resolved assigned report is intentionally allowed
+    // to reach the idempotent database operation after the same team checks.
+    const isResolutionRequest =
+      status === 'resolved' &&
+      (expectedPreviousStatus === 'responding' || expectedPreviousStatus === 'resolved');
+
+    if (isResolutionRequest) {
+      if (expectedPreviousStatus === 'responding' && !existingReport.responder_id) {
+        return res.status(409).json({ error: 'Report has no assigned responder to resolve' });
+      }
+
+      const { data: resolution, error: resolutionError } = await supabase.rpc(
+        'resolve_operational_incident_atomic',
+        {
+          p_report_id: id,
+          p_organization_id: user.organization_id,
+          p_actor_user_id: user.id,
+          p_notes: notes ?? null
+        }
+      );
+
+      if (resolutionError || !resolution || typeof resolution.status !== 'string') {
+        safeLogger.error('emergency.operational_resolution_failed');
+        return res.status(500).json({ error: 'Failed to resolve emergency incident' });
+      }
+
+      const conflictMessages = {
+        not_assigned: 'Operational incident has no assigned response team',
+        not_responding: 'Operational incident is not currently responding',
+        group_changed: 'Operational incident changed; please retry',
+        team_unavailable: 'Assigned response team is unavailable',
+        assignment_integrity_violation: 'Operational incident assignment state is inconsistent'
+      };
+
+      if (resolution.status === 'not_found') {
+        return res.status(404).json({ error: 'Emergency report not found' });
+      }
+
+      if (resolution.status === 'not_authorized') {
+        return res.status(403).json({ error: 'You are not a member of the assigned team' });
+      }
+
+      if (resolution.status === 'organization_mismatch') {
+        return res.status(403).json({ error: 'Access denied for this organization' });
+      }
+
+      if (Object.prototype.hasOwnProperty.call(conflictMessages, resolution.status)) {
+        return res.status(409).json({ error: conflictMessages[resolution.status] });
+      }
+
+      if (resolution.status !== 'resolved' && resolution.status !== 'already_resolved') {
+        safeLogger.error('emergency.operational_resolution_unknown_result');
+        return res.status(500).json({ error: 'Failed to resolve emergency incident' });
+      }
+
+      if (!resolution.report) {
+        safeLogger.error('emergency.operational_resolution_missing_report');
+        return res.status(500).json({ error: 'Failed to resolve emergency incident' });
+      }
+
+      const updatedReport = resolution.report;
+
+      // Notify once for a newly resolved operational incident. Idempotent
+      // retries must not generate duplicate subscriber notifications.
+      if (resolution.status === 'resolved' && updatedReport.cluster_id) {
+        try {
+          await clusteringService.notifyClusterSubscribers(
+            updatedReport.cluster_id,
+            notes || 'Incident status updated to resolved',
+            'resolved',
+            req.user.id,
+            updatedReport.organization_id
+          );
+        } catch (notifyError) {
+          safeLogger.error('emergency.cluster_notification_failed');
+        }
+      }
+
+      return res.json({
+        message: 'Emergency report updated successfully',
+        data: formatEmergencyReport(updatedReport)
+      });
+    }
+
     if (OPERATIONAL_TRANSITIONS[expectedPreviousStatus] !== status) {
       return res.status(409).json({ error: `Invalid status transition from ${expectedPreviousStatus} to ${status}` });
     }
 
+    // Preserve the accepted dispatched -> responding behavior unchanged.
     const updateData = {
       status,
       notes: notes ?? null,
@@ -388,11 +475,6 @@ router.put('/:id', authenticateToken, requireRole(['responder']), validateUUID('
 
     if (expectedPreviousStatus === 'dispatched') {
       updateData.responder_id = user.id;
-    } else {
-      if (!existingReport.responder_id) {
-        return res.status(409).json({ error: 'Report has no assigned responder to resolve' });
-      }
-      updateData.resolved_at = new Date().toISOString();
     }
 
     const { data: updatedReport, error } = await supabase
