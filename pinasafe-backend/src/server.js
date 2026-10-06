@@ -20,6 +20,7 @@ const clusterRoutes = require('./routes/clusters');
 const personnelRoutes = require('./routes/personnel');
 const teamsRoutes = require('./routes/teams');
 const locationTrackingRoutes = require('./routes/location-tracking');
+const responseNavigationRoutes = require('./routes/response-navigation');
 const { errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -74,6 +75,7 @@ app.use('/api/clusters', clusterRoutes);
 app.use('/api/personnel', personnelRoutes);
 app.use('/api/teams', teamsRoutes);
 app.use('/api/location-tracking', locationTrackingRoutes);
+app.use('/api/response-navigation', responseNavigationRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

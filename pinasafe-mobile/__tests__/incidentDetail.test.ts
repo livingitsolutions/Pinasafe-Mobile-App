@@ -32,6 +32,7 @@ jest.mock('@/services/apiService', () => ({
   apiService: {},
   isApiError: () => false,
 }));
+jest.mock('@/components/CitizenResponseTracking', () => ({ __esModule: true, default: () => null }));
 jest.mock('@/components/ui', () => ({
   ActionBar: 'ActionBar',
   Banner: 'Banner',

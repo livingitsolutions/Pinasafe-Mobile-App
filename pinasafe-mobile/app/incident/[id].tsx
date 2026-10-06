@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiService, isApiError, PrivateEvidenceItem } from '@/services/apiService';
 import { ActionBar, Banner, Button, Card, DetailItem, EmptyState, ErrorState, IconButton, LoadingState, PageHeader, Priority, Screen, Section, StatusBadge, TypeBadge } from '@/components/ui';
 import OperationalIncidentDetail from '@/components/OperationalIncidentDetail';
+import CitizenResponseTracking from '@/components/CitizenResponseTracking';
 import { getEmergencyReportMapUrl } from '@/utils/mapUrl';
 import { colors, radius, space, type } from '@/theme/tokens';
 
@@ -90,6 +91,7 @@ export default function IncidentDetail() {
       <View style={styles.details}><DetailItem label="Reported" value={report.created_at ? new Date(report.created_at).toLocaleString() : undefined} /><DetailItem label="Assigned team" value={report.assigned_team?.name} /><DetailItem label="Last updated" value={report.updated_at ? new Date(report.updated_at).toLocaleString() : undefined} /></View>
       {mapUrl ? <Button variant="secondary" label="Open location in maps" onPress={() => Linking.openURL(mapUrl)} icon={<MapPin size={18} color={colors.ink} />} /> : <Banner title="Map coordinates unavailable" message="Map coordinates are unavailable for this incident." tone="info" />}
     </Card>
+    {user?.role === 'citizen' ? <Section title="Response status"><CitizenResponseTracking reportId={report.id} /></Section> : null}
     <Section title="Evidence" description="Private evidence links expire after five minutes." action={<IconButton label="Refresh evidence" onPress={load}><RefreshCw size={18} color={colors.ink} /></IconButton>}>
       {evidenceError ? <ErrorState message={evidenceError} onRetry={load} /> : evidence.length === 0 ? <EmptyState title="No evidence available" message="No accepted evidence is attached to this report." /> : <View style={styles.evidenceGrid}>{evidence.map(item => <Card key={item.id} style={styles.evidenceCard}><Image accessibilityLabel={`${item.evidenceRole === 'supplementary' ? 'Supplementary' : 'Accepted'} incident evidence`} source={{ uri: item.url }} resizeMode="cover" style={styles.image} /><View style={styles.evidenceMeta}><ShieldCheck size={18} color={colors.success} /><View style={{ flex: 1 }}><Text style={styles.evidenceTitle}>{item.evidenceRole === 'supplementary' ? 'Supplementary evidence' : item.classification ? `Server-verified ${item.classification.label}` : 'Accepted incident evidence'}</Text><Text style={styles.caption}>{item.classification ? (item.classification.confidence == null ? 'Classification accepted' : `${Math.round(item.classification.confidence * 100)}% confidence`) : 'Not classified'} · {item.width}×{item.height}</Text></View></View></Card>)}</View>}
     </Section>

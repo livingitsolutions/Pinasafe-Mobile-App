@@ -120,6 +120,42 @@ export interface ResponderLocationSnapshot {
   } | null;
 }
 
+export interface RoutePoint {
+  latitude: number;
+  longitude: number;
+}
+
+export interface TrackedPosition extends RoutePoint {
+  captured_at: string;
+  freshness: 'fresh' | 'stale';
+}
+
+export interface ResponseRouteFields {
+  route_status: 'available' | 'unavailable' | 'not_applicable';
+  route: [number, number][] | null;
+  distance_meters: number | null;
+  duration_seconds: number | null;
+  calculated_at: string | null;
+}
+
+export interface ResponderNavigationSnapshot extends ResponseRouteFields {
+  report_id: string;
+  status: string | null;
+  tracking_active: boolean;
+  response_complete: boolean;
+  destination: RoutePoint | null;
+  responder_location: TrackedPosition | null;
+}
+
+export interface CitizenResponseTracking extends ResponseRouteFields {
+  status: string | null;
+  response_team_assigned: boolean;
+  tracking_active: boolean;
+  response_complete: boolean;
+  incident_location: RoutePoint | null;
+  responder_location: TrackedPosition | null;
+}
+
 export interface PrivateEvidenceItem {
   id: string;
   evidenceRole?: EvidenceRole | null;
@@ -593,6 +629,14 @@ class APIService {
 
   async getResponderLocation(reportId: string): Promise<APIResponse<{ data: ResponderLocationSnapshot }>> {
     return this.request(`/location-tracking/reports/${reportId}/location`);
+  }
+
+  async getResponderNavigation(reportId: string): Promise<APIResponse<{ data: ResponderNavigationSnapshot }>> {
+    return this.request(`/response-navigation/reports/${reportId}/navigation`);
+  }
+
+  async getCitizenResponseTracking(reportId: string): Promise<APIResponse<{ data: CitizenResponseTracking }>> {
+    return this.request(`/response-navigation/citizen/reports/${reportId}`);
   }
 
   // Organization methods

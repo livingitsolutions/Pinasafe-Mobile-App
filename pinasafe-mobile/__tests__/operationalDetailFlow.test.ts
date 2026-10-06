@@ -39,6 +39,7 @@ jest.mock('@/services/apiService', () => ({
 }));
 jest.mock('@/services/teamService', () => ({ __esModule: true, default: { getTeams: jest.fn() } }));
 jest.mock('@/utils/operations', () => ({ isTeamPresentationReady: () => true }));
+jest.mock('@/components/CitizenResponseTracking', () => ({ __esModule: true, default: () => null }));
 jest.mock('@/components/ui', () => ({
   ActionBar: 'ActionBar', Banner: 'Banner', Button: 'Button', Card: 'Card', DetailItem: 'DetailItem',
   Dialog: 'Dialog', EmptyState: 'EmptyState', ErrorState: 'ErrorState', IconButton: 'IconButton',

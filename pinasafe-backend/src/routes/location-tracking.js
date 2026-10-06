@@ -235,3 +235,6 @@ router.get('/reports/:reportId/location', authenticateToken, requireRole(['admin
 
 module.exports = router;
 module.exports.parseLocationBody = parseLocationBody;
+module.exports.loadReport = loadReport;
+module.exports.isAssignedTeamResponder = isAssignedTeamResponder;
+module.exports.LOCATION_TABLE = LOCATION_TABLE;
