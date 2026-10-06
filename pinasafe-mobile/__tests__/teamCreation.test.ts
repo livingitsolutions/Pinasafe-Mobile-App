@@ -51,10 +51,11 @@ describe('team creation state contract', () => {
     expect(payload.teamLeaderId).toBe(RESCUER_USER_ID);
   });
 
-  test('5. member request includes the selected leader user_id', () => {
+  test('5. leader included by team creation is excluded from duplicate member requests', () => {
     const form: FormState = { name: 'Team A', teamLeaderId: '', selected: [] };
     const after = selectLeader(form, RESCUER_USER_ID);
-    expect(after.selected).toContain(RESCUER_USER_ID);
+    const additionalMemberIds = after.selected.filter(userId => userId !== after.teamLeaderId);
+    expect(additionalMemberIds).not.toContain(RESCUER_USER_ID);
   });
 
   test('6. deselecting leader removes from both teamLeaderId and selected', () => {
