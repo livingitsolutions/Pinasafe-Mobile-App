@@ -78,6 +78,21 @@ export function describeCitizenResponse(snapshot: CitizenResponseTracking, now: 
     : { state: 'live', title: 'Live response location available', message: 'Route estimate unavailable.', showMap: true, routeAvailable };
 }
 
+export interface CitizenTeamView {
+  name: string;
+  lifecycle: 'Dispatched' | 'Responding' | 'Resolved' | null;
+}
+
+export function describeCitizenTeam(snapshot: CitizenResponseTracking): CitizenTeamView | null {
+  const name = typeof snapshot.response_team?.name === 'string' ? snapshot.response_team.name.trim() : '';
+  if (!name) return null;
+  const lifecycle = snapshot.response_complete || snapshot.status === 'resolved' ? 'Resolved'
+    : snapshot.status === 'responding' ? 'Responding'
+      : snapshot.status === 'dispatched' ? 'Dispatched'
+        : null;
+  return { name, lifecycle };
+}
+
 interface MapView {
   zoom: number;
   originX: number;

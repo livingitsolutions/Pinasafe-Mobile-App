@@ -75,9 +75,15 @@ const buildApp = (user, provider = { getRoute: jest.fn().mockResolvedValue(ROUTE
 const citizenUrl = (id = OP_ID) => `/nav/citizen/reports/${id}`;
 const navUrl = (id = OP_ID) => `/nav/reports/${id}/navigation`;
 
-const citizenSequence = (own, members, location) => [
+const TEAM_ALPHA = { data: { id: 'team-1', name: 'Team Alpha', organization_id: 'org-1' }, error: null };
+const hasSameOrgAssignment = (own, members) => members.some(member => (
+  member.assigned_team_id && member.organization_id === own.organization_id
+));
+
+const citizenSequence = (own, members, location, team = TEAM_ALPHA) => [
   buildQuery({ data: own, error: null }),
   buildQuery({ data: members, error: null }),
+  ...(hasSameOrgAssignment(own, members) ? [buildQuery(team)] : []),
   ...(location ? [buildQuery(location)] : [])
 ];
 
@@ -100,6 +106,7 @@ describe('V3.6C.1 citizen-safe response tracking', () => {
     expect(response.body.data).toEqual({
       status: 'responding',
       response_team_assigned: true,
+      response_team: { name: 'Team Alpha' },
       tracking_active: true,
       response_complete: false,
       incident_location: { latitude: 14.6, longitude: 121.0 },
@@ -110,7 +117,7 @@ describe('V3.6C.1 citizen-safe response tracking', () => {
       duration_seconds: 780,
       calculated_at: new Date(NOW).toISOString()
     });
-    expect(from.mock.calls.map(call => call[0])).toEqual(['emergency_reports', 'emergency_reports', 'incident_response_locations']);
+    expect(from.mock.calls.map(call => call[0])).toEqual(['emergency_reports', 'emergency_reports', 'rescue_teams', 'incident_response_locations']);
   });
 
   test('2. unrelated citizen is denied without reading members or locations', async () => {
@@ -185,7 +192,7 @@ describe('V3.6C.1 citizen-safe response tracking', () => {
     const { app, provider } = buildApp(owner);
     const response = await request(app).get(citizenUrl());
     expect(response.body.data).toMatchObject({ status: 'resolved', response_complete: true, tracking_active: false, responder_location: null, duration_seconds: null, distance_meters: null, route: null });
-    expect(from).toHaveBeenCalledTimes(2);
+    expect(from).toHaveBeenCalledTimes(3);
     expect(provider.getRoute).not.toHaveBeenCalled();
   });
 
@@ -245,6 +252,108 @@ describe('V3.6C.1 citizen-safe response tracking', () => {
     expect(response.body.data.incident_location).toBeNull();
     expect(response.body.data.route_status).toBe('not_applicable');
     expect(provider.getRoute).not.toHaveBeenCalled();
+  });
+});
+
+describe('V3.6C.1A citizen assigned response team', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('A1/A5. owner of the assigned root report sees only the safe team name', async () => {
+    const team = buildQuery(TEAM_ALPHA);
+    mockFromSequence([buildQuery({ data: anchor(), error: null }), buildQuery({ data: [anchor(), sibling()], error: null }), team, buildQuery(locationRow())]);
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(response.status).toBe(200);
+    expect(response.body.data.response_team).toEqual({ name: 'Team Alpha' });
+    expect(team.select).toHaveBeenCalledWith('id, name, organization_id');
+    expect(team.eq).toHaveBeenCalledWith('id', 'team-1');
+    expect(team.eq).toHaveBeenCalledWith('organization_id', 'org-1');
+  });
+
+  test('A2. owner of an unassigned sibling sees the same team name without sibling propagation', async () => {
+    mockFromSequence(citizenSequence(sibling(), [anchor(), sibling()], locationRow()));
+    const response = await request(buildApp(siblingOwner).app).get(citizenUrl(SIBLING_ID));
+    expect(response.status).toBe(200);
+    expect(response.body.data.response_team).toEqual({ name: 'Team Alpha' });
+  });
+
+  test('A2b. dispatched (before Respond) sibling owner sees the team name', async () => {
+    mockFromSequence(citizenSequence(sibling({ status: 'pending' }), [anchor({ status: 'dispatched' }), sibling({ status: 'pending' })]));
+    const response = await request(buildApp(siblingOwner).app).get(citizenUrl(SIBLING_ID));
+    expect(response.body.data).toMatchObject({ status: 'dispatched', response_team: { name: 'Team Alpha' }, tracking_active: false });
+  });
+
+  test('A3. unrelated citizen is denied before any team lookup', async () => {
+    const from = mockFromSequence(citizenSequence(anchor(), [anchor(), sibling()]));
+    const response = await request(buildApp(stranger).app).get(citizenUrl());
+    expect(response.status).toBe(404);
+    expect(from.mock.calls.map(call => call[0])).not.toContain('rescue_teams');
+    expect(JSON.stringify(response.body)).not.toMatch(/Team Alpha/);
+  });
+
+  test('A4. a team row from another organization is never exposed', async () => {
+    mockFromSequence(citizenSequence(anchor(), [anchor()], locationRow(), {
+      data: { id: 'team-1', name: 'Foreign Team', organization_id: 'org-2' }, error: null
+    }));
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(response.body.data.response_team).toBeNull();
+    expect(JSON.stringify(response.body)).not.toMatch(/Foreign Team/);
+  });
+
+  test('A4b. an assignment on a member from another organization triggers no team lookup', async () => {
+    const foreign = anchor({ id: OTHER_ID, organization_id: 'org-2', assigned_team_id: 'team-x' });
+    const from = mockFromSequence(citizenSequence(sibling(), [sibling(), foreign]));
+    const response = await request(buildApp(siblingOwner).app).get(citizenUrl(SIBLING_ID));
+    expect(response.body.data.response_team).toBeNull();
+    expect(from.mock.calls.map(call => call[0])).not.toContain('rescue_teams');
+  });
+
+  test('A4c. a mismatched team id is never exposed', async () => {
+    mockFromSequence(citizenSequence(anchor(), [anchor()], locationRow(), {
+      data: { id: 'team-9', name: 'Other Team', organization_id: 'org-1' }, error: null
+    }));
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(response.body.data.response_team).toBeNull();
+  });
+
+  test('A6-A8. response team contains only the name: no team id, assigned team id or responder identity', async () => {
+    mockFromSequence(citizenSequence(anchor(), [anchor(), sibling()], locationRow(), {
+      data: { id: 'team-1', name: 'Team Alpha', organization_id: 'org-1', team_leader_id: 'responder-1' }, error: null
+    }));
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(Object.keys(response.body.data.response_team)).toEqual(['name']);
+    const keys = collectKeys(response.body.data);
+    FORBIDDEN_KEYS.forEach(key => expect(keys.has(key)).toBe(false));
+    expect(JSON.stringify(response.body)).not.toMatch(/team-1|responder-1|org-1|team_leader/);
+  });
+
+  test('A9. unassigned incident returns null without a team lookup', async () => {
+    const from = mockFromSequence(citizenSequence(anchor({ status: 'pending', assigned_team_id: null }), [anchor({ status: 'pending', assigned_team_id: null })]));
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(response.body.data.response_team).toBeNull();
+    expect(from.mock.calls.map(call => call[0])).not.toContain('rescue_teams');
+  });
+
+  test.each([null, '', '   '])('A9b. missing or blank team name %p is never fabricated', async (name) => {
+    mockFromSequence(citizenSequence(anchor(), [anchor()], locationRow(), {
+      data: name === null ? null : { id: 'team-1', name, organization_id: 'org-1' }, error: null
+    }));
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(response.status).toBe(200);
+    expect(response.body.data.response_team).toBeNull();
+    expect(response.body.data.tracking_active).toBe(true);
+  });
+
+  test('A9c. team lookup failure fails closed with a generic error', async () => {
+    mockFromSequence(citizenSequence(anchor(), [anchor()], locationRow(), { data: null, error: new Error('db') }));
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error: 'Failed to fetch response tracking' });
+  });
+
+  test('A10. resolved incident keeps showing the team that responded', async () => {
+    mockFromSequence(citizenSequence(anchor({ status: 'resolved' }), [anchor({ status: 'resolved' })]));
+    const response = await request(buildApp(owner).app).get(citizenUrl());
+    expect(response.body.data).toMatchObject({ status: 'resolved', response_team: { name: 'Team Alpha' }, response_team_assigned: false });
   });
 });
 

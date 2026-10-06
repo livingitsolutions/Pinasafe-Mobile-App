@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { apiService, CitizenResponseTracking as CitizenResponseSnapshot } from '@/services/apiService';
 import RouteMap from '@/components/RouteMap';
 import { formatLocationAge } from '@/utils/liveTracking';
-import { describeCitizenResponse, ETA_UNAVAILABLE, formatDistance, formatEta, isRoutePoint, NAVIGATION_POLL_MS, toRoutePoints } from '@/utils/responseRoute';
+import { describeCitizenResponse, describeCitizenTeam, ETA_UNAVAILABLE, formatDistance, formatEta, isRoutePoint, NAVIGATION_POLL_MS, toRoutePoints } from '@/utils/responseRoute';
 import { colors, radius, space, type } from '@/theme/tokens';
 
 const CLOCK_MS = 5000;
@@ -42,6 +42,7 @@ export default function CitizenResponseTracking({ reportId }: { reportId: string
   }
 
   const view = describeCitizenResponse(snapshot, now);
+  const assignedTeam = describeCitizenTeam(snapshot);
   const team = isRoutePoint(snapshot.responder_location) ? snapshot.responder_location : null;
   const destination = isRoutePoint(snapshot.incident_location) ? snapshot.incident_location : null;
   const eta = view.routeAvailable ? formatEta(snapshot.duration_seconds) : null;
@@ -59,6 +60,16 @@ export default function CitizenResponseTracking({ reportId }: { reportId: string
       </View> : null}
     </View>
     <Text style={[styles.caption, stale ? { color: colors.warning } : null]}>{view.message}</Text>
+
+    {assignedTeam ? <View style={styles.teamCard}>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={styles.metricLabel}>Assigned Response Team</Text>
+        <Text style={styles.teamName}>{assignedTeam.name}</Text>
+      </View>
+      {assignedTeam.lifecycle ? <View style={[styles.badge, { backgroundColor: assignedTeam.lifecycle === 'Dispatched' ? colors.surface : colors.successSoft }]}>
+        <Text style={[styles.badgeText, { color: assignedTeam.lifecycle === 'Dispatched' ? colors.ink : colors.success }]}>{assignedTeam.lifecycle}</Text>
+      </View> : null}
+    </View> : null}
 
     {view.showMap ? <RouteMap team={team} destination={destination} route={view.routeAvailable ? toRoutePoints(snapshot.route) : []} stale={stale} teamLabel="Response Team" destinationLabel="Your reported location" /> : null}
 
@@ -89,6 +100,8 @@ const styles = StyleSheet.create({
   caption: { ...type.caption, color: colors.muted },
   badge: { paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.pill },
   badgeText: { ...type.caption, fontFamily: type.label.fontFamily },
+  teamCard: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt },
+  teamName: { ...type.title, color: colors.ink },
   metrics: { flexDirection: 'row', gap: space.md },
   metric: { flex: 1, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceAlt, gap: 2 },
   metricLabel: { ...type.caption, color: colors.muted },

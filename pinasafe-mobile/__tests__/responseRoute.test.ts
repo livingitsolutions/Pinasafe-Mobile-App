@@ -7,7 +7,7 @@ import {
 
 const NOW = Date.parse('2026-10-06T10:00:00.000Z');
 const base: CitizenResponseTracking = {
-  status: 'responding', response_team_assigned: true, tracking_active: true, response_complete: false,
+  status: 'responding', response_team_assigned: true, response_team: { name: 'Team Alpha' }, tracking_active: true, response_complete: false,
   incident_location: { latitude: 14.6, longitude: 121 },
   responder_location: { latitude: 14.55, longitude: 121.05, captured_at: '2026-10-06T09:59:55.000Z', freshness: 'fresh' },
   route_status: 'available', route: [[14.55, 121.05], [14.6, 121]], distance_meters: 6400, duration_seconds: 780, calculated_at: '2026-10-06T09:59:58.000Z',

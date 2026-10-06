@@ -150,6 +150,7 @@ export interface ResponderNavigationSnapshot extends ResponseRouteFields {
 export interface CitizenResponseTracking extends ResponseRouteFields {
   status: string | null;
   response_team_assigned: boolean;
+  response_team: { name: string } | null;
   tracking_active: boolean;
   response_complete: boolean;
   incident_location: RoutePoint | null;

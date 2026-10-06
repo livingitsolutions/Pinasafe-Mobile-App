@@ -233,9 +233,6 @@ export type CaptureFailureBoundary =
   | 'photo-timeout'
   | 'photo-uri-missing'
   | 'photo-result-validation-error'
-  | 'photo-return-diagnostic-error'
-  | 'location-return-diagnostic-error'
-  | 'manipulation-marker-diagnostic-error'
   | 'post-capture-unexpected';
 
 type CaptureFailureObserver = (boundary: CaptureFailureBoundary) => void;

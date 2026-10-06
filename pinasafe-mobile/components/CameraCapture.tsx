@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -6,7 +6,6 @@ import { Camera as CameraIcon, RotateCcw, X } from 'lucide-react-native';
 import { locationService } from '@/hooks/locationService';
 import {
   captureWithLocation,
-  CaptureFailureBoundary,
   CaptureLocation,
   getShutterState,
   isPhotoCaptureTimeout,
@@ -16,124 +15,6 @@ import {
 interface CameraCaptureProps {
   onCapture: (uri: string, captureLocation: CaptureLocation) => Promise<void>;
   onCancel: () => void;
-}
-
-const CAMERA_DIAGNOSTICS_ENABLED = true;
-
-type DiagnosticEvent =
-  | 'mounted' | 'unmounted' | 'ref-attached' | 'ref-detached'
-  | 'camera-ready' | 'camera-ready-ignored' | 'controls-touch'
-  | 'shutter-press-in' | 'shutter-press' | 'handler-entered'
-  | 'handler-blocked-permission' | 'handler-blocked-ref'
-  | 'handler-blocked-ready' | 'handler-blocked-processing'
-  | 'processing' | 'capture-invoked' | 'capture-returned'
-  | 'location-wait' | 'location-returned' | 'manipulation-invoked'
-  | 'manipulation-returned' | 'callback-invoked' | 'capture-complete'
-  | 'capture-error' | 'photo-timeout' | 'generation-restarted' | 'attempt-obsolete';
-
-type CameraDiagnosticState = {
-  generation: number;
-  readyGeneration: number;
-  attempt: number;
-  permission: boolean;
-  refAttached: boolean;
-  ready: boolean;
-  readyCallbackReceived: boolean;
-  readyGenerationMatches: boolean;
-  readyCallbackGeneration: number;
-  processing: boolean;
-  shutterEnabled: boolean;
-  shutterReason: ReturnType<typeof getShutterState>['reason'];
-  controlsTouch: boolean;
-  pressIn: boolean;
-  press: boolean;
-  handlerEntered: boolean;
-  captureInvoked: boolean;
-  photoReturned: boolean;
-  locationReturned: boolean;
-  manipulationInvoked: boolean;
-  manipulationReturned: boolean;
-  callbackInvoked: boolean;
-  failureBoundary: CaptureFailureBoundary;
-  lastEvent: DiagnosticEvent;
-};
-
-export function createCameraDiagnostics(permission: boolean) {
-  let snapshot: CameraDiagnosticState = {
-    generation: 0, readyGeneration: 0, attempt: 0,
-    permission, refAttached: false, ready: false, processing: false,
-    readyCallbackReceived: false, readyGenerationMatches: false, readyCallbackGeneration: -1,
-    shutterEnabled: false, shutterReason: permission ? 'starting' : 'permission',
-    controlsTouch: false, pressIn: false, press: false, handlerEntered: false,
-    captureInvoked: false, photoReturned: false, locationReturned: false,
-    manipulationInvoked: false, manipulationReturned: false, callbackInvoked: false,
-    failureBoundary: 'none',
-    lastEvent: 'mounted',
-  };
-  const listeners = new Set<() => void>();
-  const publicationFailed = (boundary?: CaptureFailureBoundary) => {
-    if (boundary) snapshot = { ...snapshot, failureBoundary: boundary };
-  };
-  const notify = (boundary?: CaptureFailureBoundary) => {
-    listeners.forEach(listener => {
-      try {
-        listener();
-      } catch {
-        publicationFailed(boundary);
-      }
-    });
-  };
-  const update = (changes: Partial<CameraDiagnosticState>, boundary?: CaptureFailureBoundary) => {
-    snapshot = { ...snapshot, ...changes };
-    notify(boundary);
-  };
-  return {
-    getSnapshot: () => snapshot,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      return () => { listeners.delete(listener); };
-    },
-    update,
-    record: (event: DiagnosticEvent, changes: Partial<CameraDiagnosticState> = {}) => {
-      const boundary: CaptureFailureBoundary | undefined = event === 'capture-returned'
-        ? 'photo-return-diagnostic-error'
-        : event === 'location-returned' ? 'location-return-diagnostic-error'
-          : event === 'manipulation-invoked' ? 'manipulation-marker-diagnostic-error' : undefined;
-      update({ ...changes, lastEvent: event }, boundary);
-      if (CAMERA_DIAGNOSTICS_ENABLED) {
-        try {
-          console.info('Camera diagnostics', snapshot);
-        } catch {
-          publicationFailed(boundary);
-          notify();
-        }
-      }
-    },
-  };
-}
-
-function CameraDiagnosticPanel({ diagnostics }: { diagnostics: ReturnType<typeof createCameraDiagnostics> }) {
-  const state = useSyncExternalStore(diagnostics.subscribe, diagnostics.getSnapshot, diagnostics.getSnapshot);
-  const yesNo = (value: boolean) => value ? 'yes' : 'no';
-  return (
-    <View pointerEvents="none" style={{ position: 'absolute', top: 105, left: 12, right: 12, padding: 10, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.85)' }}>
-      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Camera diagnostics</Text>
-      <Text style={{ color: '#fff', fontSize: 11, lineHeight: 16 }}>
-        generation: {state.generation} · ready generation: {state.readyGeneration} · attempt: {state.attempt}{'\n'}
-        permission: {yesNo(state.permission)} · ref attached: {yesNo(state.refAttached)}{'\n'}
-        ready: {yesNo(state.ready)} · processing: {yesNo(state.processing)}{'\n'}
-        ready callback: {yesNo(state.readyCallbackReceived)} · generation: {state.readyCallbackGeneration} · matched: {yesNo(state.readyGenerationMatches)}{'\n'}
-        shutter enabled: {yesNo(state.shutterEnabled)}{'\n'}
-        controls touch: {yesNo(state.controlsTouch)} · press-in: {yesNo(state.pressIn)} · press: {yesNo(state.press)}{'\n'}
-        handler entered: {yesNo(state.handlerEntered)} · capture invoked: {yesNo(state.captureInvoked)}{'\n'}
-        photo returned: {yesNo(state.photoReturned)} · location returned: {yesNo(state.locationReturned)}{'\n'}
-        manipulation invoked: {yesNo(state.manipulationInvoked)} · returned: {yesNo(state.manipulationReturned)}{'\n'}
-        callback invoked: {yesNo(state.callbackInvoked)}{'\n'}
-        failure boundary: {state.failureBoundary}{'\n'}
-        last event: {state.lastEvent}
-      </Text>
-    </View>
-  );
 }
 
 export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProps) {
@@ -154,11 +35,6 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
   // shutter. Updated synchronously when cameraGeneration changes so a late
   // callback from an obsolete CameraView can never enable the current one.
   const readyGenerationRef = useRef(0);
-  const [diagnostics] = useState(() => createCameraDiagnostics(Boolean(permission?.granted)));
-  const attachCameraRef = useCallback((camera: CameraView | null) => {
-    cameraRef.current = camera;
-    diagnostics.record(camera ? 'ref-attached' : 'ref-detached', { refAttached: camera !== null });
-  }, [diagnostics]);
 
   useEffect(() => {
     void (async () => {
@@ -173,116 +49,36 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
     isProcessing,
   });
 
-  useEffect(() => {
-    diagnostics.record('mounted');
-    return () => diagnostics.record('unmounted');
-  }, [diagnostics]);
-
-  useEffect(() => {
-    const generationChanged = diagnostics.getSnapshot().generation !== cameraGeneration;
-    diagnostics.update({
-      generation: cameraGeneration,
-      readyGeneration: readyGenerationRef.current,
-      attempt: attemptRef.current,
-      permission: Boolean(permission?.granted),
-      refAttached: cameraRef.current !== null,
-      ready: cameraReady,
-      processing: isProcessing,
-      shutterEnabled: shutterState.enabled,
-      shutterReason: shutterState.reason,
-    });
-    if (generationChanged) {
-      const receivedForGeneration = diagnostics.getSnapshot().readyCallbackGeneration === cameraGeneration;
-      diagnostics.record('generation-restarted', {
-        readyCallbackReceived: receivedForGeneration,
-        readyGenerationMatches: receivedForGeneration && readyGenerationRef.current === cameraGeneration,
-      });
-    }
-  }, [diagnostics, cameraGeneration, cameraReady, isProcessing, permission?.granted, shutterState.enabled, shutterState.reason]);
-
   const takePicture = async () => {
-    diagnostics.record('handler-entered', { handlerEntered: true });
     // Fail safely instead of a silent dead shutter when the camera is not ready
     // or the native ref is unavailable.
     if (!permission?.granted || cameraRef.current === null || !cameraReady) {
-      diagnostics.record(!permission?.granted ? 'handler-blocked-permission'
-        : cameraRef.current === null ? 'handler-blocked-ref' : 'handler-blocked-ready');
       Alert.alert('Camera starting', 'Camera is still starting. Please try again in a moment.', [{ text: 'OK' }]);
       return;
     }
-    if (isProcessing) {
-      diagnostics.record('handler-blocked-processing');
-      return;
-    }
+    if (isProcessing) return;
 
     const attemptId = ++attemptRef.current;
-    let failureBoundary: CaptureFailureBoundary = 'none';
-    const recordFailureBoundary = (boundary: CaptureFailureBoundary) => {
-      failureBoundary = boundary;
-    };
-    const recordAttempt = (event: DiagnosticEvent, changes: Partial<CameraDiagnosticState> = {}) => {
-      if (attemptRef.current === attemptId) {
-        diagnostics.record(event, changes);
-      } else if (CAMERA_DIAGNOSTICS_ENABLED) {
-        try {
-          console.info('Camera diagnostics', { lastEvent: 'attempt-obsolete', generation: cameraGeneration, attempt: attemptId });
-        } catch {
-          return;
-        }
-      }
-    };
     try {
       setIsProcessing(true);
-      recordAttempt('processing', {
-        failureBoundary: 'none',
-        attempt: attemptId, captureInvoked: false, photoReturned: false, locationReturned: false,
-        manipulationInvoked: false, manipulationReturned: false, callbackInvoked: false,
-      });
       const camera = cameraRef.current;
       const { photo: rawPhoto, captureLocation } = await captureWithLocation(
-        () => {
-          recordAttempt('capture-invoked', { captureInvoked: true });
-          return camera.takePictureAsync({ quality: 1 }).then(photo => {
-            recordAttempt('capture-returned', { photoReturned: true });
-            return photo;
-          });
-        },
-        () => {
-          recordAttempt('location-wait');
-          return locationService.getCurrentLocation().then(location => {
-            recordAttempt('location-returned', { locationReturned: true });
-            return location;
-          });
-        },
-        recordFailureBoundary,
+        () => camera.takePictureAsync({ quality: 1 }),
+        () => locationService.getCurrentLocation(),
       );
-      if (attemptRef.current !== attemptId) {
-        recordAttempt('attempt-obsolete');
-        return;
-      }
-      validatePhotoCaptureResult(rawPhoto, recordFailureBoundary);
+      if (attemptRef.current !== attemptId) return;
+      validatePhotoCaptureResult(rawPhoto);
 
-      recordAttempt('manipulation-invoked', { manipulationInvoked: true });
       const normalizedPhoto = await ImageManipulator.manipulateAsync(
         rawPhoto.uri,
         [{ resize: { width: 500, height: 500 } }],
         { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
       );
-      recordAttempt('manipulation-returned', { manipulationReturned: true });
-      if (attemptRef.current !== attemptId) {
-        recordAttempt('attempt-obsolete');
-        return;
-      }
-      recordAttempt('callback-invoked', { callbackInvoked: true });
+      if (attemptRef.current !== attemptId) return;
       await onCapture(normalizedPhoto.uri, captureLocation);
-      recordAttempt('capture-complete', { failureBoundary: 'none' });
     } catch (captureError) {
-      if (attemptRef.current !== attemptId) {
-        recordAttempt('attempt-obsolete');
-        return;
-      }
+      if (attemptRef.current !== attemptId) return;
       if (isPhotoCaptureTimeout(captureError)) {
-        recordAttempt('photo-timeout', { failureBoundary: 'photo-timeout' });
         setCameraReady(false);
         setCameraGeneration(gen => {
           readyGenerationRef.current = gen + 1;
@@ -295,9 +91,6 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         );
         return;
       }
-      recordAttempt('capture-error', {
-        failureBoundary: failureBoundary === 'none' ? 'post-capture-unexpected' : failureBoundary,
-      });
       const message = captureError instanceof Error && /location/i.test(captureError.message)
         ? 'Location could not be captured. Check location access and try the photo again.'
         : 'A photo and current location are required. Check camera and location permissions, then try again.';
@@ -326,7 +119,6 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
         >
           <Text style={{ color: 'white', fontWeight: '600' }}>Grant Permission</Text>
         </TouchableOpacity>
-        {CAMERA_DIAGNOSTICS_ENABLED && <CameraDiagnosticPanel diagnostics={diagnostics} />}
       </View>
     );
   }
@@ -335,15 +127,10 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
     <View style={{ flex: 1, backgroundColor: 'black' }}>
       <CameraView
         key={cameraGeneration}
-        ref={attachCameraRef}
+        ref={cameraRef}
         style={{ flex: 1 }}
         facing={facing}
         onCameraReady={() => {
-          diagnostics.record(readyGenerationRef.current === cameraGeneration ? 'camera-ready' : 'camera-ready-ignored', {
-            readyCallbackReceived: true,
-            readyGenerationMatches: readyGenerationRef.current === cameraGeneration,
-            readyCallbackGeneration: cameraGeneration,
-          });
           if (readyGenerationRef.current === cameraGeneration) {
             setCameraReady(true);
           }
@@ -375,7 +162,6 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
       </View>
 
       <View
-        onTouchStart={() => diagnostics.record('controls-touch', { controlsTouch: true })}
         style={{
           position: 'absolute',
           bottom: 40,
@@ -409,18 +195,8 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
             <Text style={{ color: 'white', marginTop: 8 }}>Starting camera…</Text>
           </View>
         )}
-        {CAMERA_DIAGNOSTICS_ENABLED && <Text pointerEvents="none" style={{ color: shutterState.enabled ? '#fff' : '#facc15', fontWeight: '700', marginBottom: 8 }}>
-          {shutterState.enabled ? 'SHUTTER: READY'
-            : shutterState.reason === 'processing' ? 'SHUTTER: PROCESSING'
-              : shutterState.reason === 'permission' ? 'SHUTTER: PERMISSION REQUIRED'
-                : 'SHUTTER: WAITING FOR CAMERA'}
-        </Text>}
         <TouchableOpacity
-          onPressIn={() => diagnostics.record('shutter-press-in', { pressIn: true })}
-          onPress={() => {
-            diagnostics.record('shutter-press', { press: true });
-            return takePicture();
-          }}
+          onPress={takePicture}
           disabled={!shutterState.enabled}
           accessibilityState={{ disabled: !shutterState.enabled }}
           style={{
@@ -444,7 +220,6 @@ export default function CameraCapture({ onCapture, onCancel }: CameraCaptureProp
           {shutterState.reason === 'starting' ? 'Starting camera…' : 'Take a clear photo for server verification'}
         </Text>
       </View>
-      {CAMERA_DIAGNOSTICS_ENABLED && <CameraDiagnosticPanel diagnostics={diagnostics} />}
     </View>
   );
 }

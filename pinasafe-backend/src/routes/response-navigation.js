@@ -52,6 +52,27 @@ const routeFields = (route) => (route.status === 'available'
 
 const NO_ROUTE = { route_status: 'not_applicable', route: null, distance_meters: null, duration_seconds: null, calculated_at: null };
 
+// Assignment is stored on one operational member; prefer an active assignment, else the historical one.
+const findAssignedMember = (members) => {
+  const assigned = members.filter((member) => member.assigned_team_id).sort(byCreatedThenId);
+  return assigned.find((member) => member.status !== 'resolved') || assigned[0] || null;
+};
+
+// Only the display name leaves the server, and only for a team in the incident's own organization.
+const loadCitizenResponseTeam = async (supabase, assignedMember, organizationId) => {
+  if (!assignedMember) return null;
+  const { data: team, error } = await supabase
+    .from('rescue_teams')
+    .select('id, name, organization_id')
+    .eq('id', assignedMember.assigned_team_id)
+    .eq('organization_id', organizationId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!team || team.id !== assignedMember.assigned_team_id || team.organization_id !== organizationId) return null;
+  const name = typeof team.name === 'string' ? team.name.trim() : '';
+  return name ? { name } : null;
+};
+
 const createResponseNavigationRouter = ({ routeService = createResponseRouteService({ provider: createOsrmRouteProvider() }), now = Date.now } = {}) => {
   const router = express.Router();
 
@@ -132,9 +153,11 @@ const createResponseNavigationRouter = ({ routeService = createResponseRouteServ
         .filter((member) => member.status === 'responding' && member.assigned_team_id)
         .sort(byCreatedThenId)[0];
       const ownPoint = clusteringService.getCoordinates(ownReport);
+      const responseTeam = await loadCitizenResponseTeam(supabase, findAssignedMember(members), ownReport.organization_id);
       const base = {
         status: summary.status,
         response_team_assigned: members.some((member) => member.assigned_team_id && member.status !== 'resolved'),
+        response_team: responseTeam,
         tracking_active: false,
         response_complete: summary.status === 'resolved',
         incident_location: ownPoint,

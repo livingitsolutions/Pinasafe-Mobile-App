@@ -88,7 +88,7 @@ export default function IncidentDetail() {
       <View style={styles.badges}><TypeBadge value={report.type} /><StatusBadge value={report.status} /><Priority value={report.priority} /></View>
       <Text style={styles.description}>{report.description}</Text>
       <View style={styles.location}><MapPin size={20} color={colors.brand} /><Text style={styles.locationText}>{report.location}</Text></View>
-      <View style={styles.details}><DetailItem label="Reported" value={report.created_at ? new Date(report.created_at).toLocaleString() : undefined} /><DetailItem label="Assigned team" value={report.assigned_team?.name} /><DetailItem label="Last updated" value={report.updated_at ? new Date(report.updated_at).toLocaleString() : undefined} /></View>
+      <View style={styles.details}><DetailItem label="Reported" value={report.created_at ? new Date(report.created_at).toLocaleString() : undefined} />{user?.role === 'citizen' ? null : <DetailItem label="Assigned team" value={report.assigned_team?.name} />}<DetailItem label="Last updated" value={report.updated_at ? new Date(report.updated_at).toLocaleString() : undefined} /></View>
       {mapUrl ? <Button variant="secondary" label="Open location in maps" onPress={() => Linking.openURL(mapUrl)} icon={<MapPin size={18} color={colors.ink} />} /> : <Banner title="Map coordinates unavailable" message="Map coordinates are unavailable for this incident." tone="info" />}
     </Card>
     {user?.role === 'citizen' ? <Section title="Response status"><CitizenResponseTracking reportId={report.id} /></Section> : null}
