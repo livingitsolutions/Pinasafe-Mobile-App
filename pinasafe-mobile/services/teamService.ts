@@ -6,6 +6,9 @@ export interface TeamMember {
   user_id: string;
   assigned_at: string;
   assigned_by: string;
+  position?: string;
+  personnel_role?: 'staff' | 'rescue_member' | null;
+  is_active?: boolean;
   user?: {
     id: string;
     name: string;
@@ -54,7 +57,7 @@ export interface CreateTeamData {
 
 export interface UpdateTeamData {
   name?: string;
-  teamLeaderId?: string;
+  teamLeaderId?: string | null;
   description?: string;
   isActive?: boolean;
 }
@@ -67,12 +70,11 @@ class TeamService {
   async getTeams(): Promise<RescueTeam[]> {
     try {
       const response = await apiService.getTeams();
-      // Backend returns {data: [...]} which gets wrapped as {data: {data: [...]}}
       const teams = response.data?.data || response.data || [];
       return Array.isArray(teams) ? teams : [];
     } catch (error) {
       console.error('Get teams error:', error);
-      return [];
+      throw error;
     }
   }
 

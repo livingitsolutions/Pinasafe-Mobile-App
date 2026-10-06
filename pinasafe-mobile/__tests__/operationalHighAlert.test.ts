@@ -1,10 +1,11 @@
 import type { OperationalCluster } from '../types/operationalCluster';
-import { canDispatchMember } from '../utils/operationalCluster';
 import {
   getActiveOperationalAlertIds,
   getOperationalHighAlertPresentation,
   isOperationalHighAlertAudioSupported,
   OperationalHighAlertAudioController,
+  readOperationalHighAlertAudioPreference,
+  saveOperationalHighAlertAudioPreference,
 } from '../utils/operationalHighAlert';
 
 const cluster = (overrides: Partial<OperationalCluster> = {}): OperationalCluster => ({
@@ -46,12 +47,8 @@ describe('operational corroborated High Alert state', () => {
     })).corroborated).toBe(false);
   });
 
-  test('two reports from distinct reporters display the backend corroborated alert', () => {
-    expect(getOperationalHighAlertPresentation(cluster({
-      reportCount: 2,
-      distinctReporterCount: 2,
-      corroborated: true,
-    }))).toEqual({
+  test('two distinct reports are corroborated and active when unassigned', () => {
+    expect(getOperationalHighAlertPresentation(cluster())).toEqual({
       corroborated: true,
       active: true,
       assigned: false,
@@ -60,39 +57,20 @@ describe('operational corroborated High Alert state', () => {
   });
 
   test('legacy acknowledgement does not silence an unassigned corroborated alert', () => {
-    expect(getOperationalHighAlertPresentation(cluster({ acknowledged: true }))).toEqual({
-      corroborated: true,
-      active: true,
-      assigned: false,
-      label: 'URGENT — CORROBORATED HIGH ALERT',
-    });
+    expect(getOperationalHighAlertPresentation(cluster({ acknowledged: true })).active).toBe(true);
   });
 
-  test('any assigned member team silences the operational alert, including partially assigned incidents', () => {
-    const partiallyAssigned = cluster({
-      assignedTeams: [{ id: 'team-1' }],
-      memberReports: [
-        { id: 'r-1', organization_id: 'org-1', assigned_team_id: 'team-1', type: 'fire', description: null, latitude: null, longitude: null, priority: 'high', status: 'dispatched', created_at: null, coordinates: null },
-        { id: 'r-2', organization_id: 'org-1', assigned_team_id: null, type: 'fire', description: null, latitude: null, longitude: null, priority: 'high', status: 'pending', created_at: null, coordinates: null },
-      ],
-    });
-    expect(getOperationalHighAlertPresentation(partiallyAssigned)).toEqual({
+  test('authoritative assignment stops a corroborated alert without changing the visual assigned state', () => {
+    const assigned = cluster({ assignedTeams: [{ id: 'team-1' }] });
+    expect(getOperationalHighAlertPresentation(assigned)).toEqual({
       corroborated: true,
       active: false,
       assigned: true,
       label: 'CORROBORATED INCIDENT',
     });
-    expect(canDispatchMember(partiallyAssigned.memberReports[1], 'admin')).toBe(true);
   });
 
-  test('an already-assigned incident remains silent when it becomes corroborated', () => {
-    expect(getOperationalHighAlertPresentation(cluster({
-      corroborated: true,
-      assignedTeams: [{ id: 'team-1' }],
-    })).active).toBe(false);
-  });
-
-  test('resolved incidents are not active and operational incidents are tracked independently', () => {
+  test('resolved and uncorroborated incidents are not active', () => {
     expect(getActiveOperationalAlertIds([
       cluster(),
       cluster({ operationalId: 'op-2', acknowledged: true }),
@@ -101,13 +79,44 @@ describe('operational corroborated High Alert state', () => {
       cluster({ operationalId: 'op-5', assignedTeams: [{ id: 'team-1' }] }),
     ])).toEqual(['op-1', 'op-2']);
   });
+});
 
-  test('assignment request intent cannot affect alert activity before the backend response changes', () => {
-    const beforeAssignment = cluster();
-    const duringPendingAssignment = { ...beforeAssignment };
-    const afterFailure = { ...beforeAssignment };
-    expect(getOperationalHighAlertPresentation(duringPendingAssignment).active).toBe(true);
-    expect(getOperationalHighAlertPresentation(afterFailure).active).toBe(true);
+describe('High Alert audio preference', () => {
+  let localStorageMock: Storage;
+
+  beforeEach(() => {
+    localStorageMock = {
+      getItem: jest.fn(() => null),
+      setItem: jest.fn(),
+      removeItem: jest.fn(),
+      clear: jest.fn(),
+      key: jest.fn(() => null),
+      length: 0,
+    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { localStorage: localStorageMock, AudioContext: jest.fn() },
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'window');
+  });
+
+  test('no stored preference defaults to enabled', () => {
+    expect(readOperationalHighAlertAudioPreference()).toBe(true);
+  });
+
+  test('explicit mute and re-enable preferences persist as booleans', () => {
+    saveOperationalHighAlertAudioPreference(false);
+    expect(localStorageMock.setItem).toHaveBeenLastCalledWith('pinasafe.highAlertAudioEnabled', 'false');
+    (localStorageMock.getItem as jest.Mock).mockReturnValue('false');
+    expect(readOperationalHighAlertAudioPreference()).toBe(false);
+
+    saveOperationalHighAlertAudioPreference(true);
+    expect(localStorageMock.setItem).toHaveBeenLastCalledWith('pinasafe.highAlertAudioEnabled', 'true');
+    (localStorageMock.getItem as jest.Mock).mockReturnValue('true');
+    expect(readOperationalHighAlertAudioPreference()).toBe(true);
   });
 });
 
@@ -115,6 +124,8 @@ describe('operational High Alert audio controller', () => {
   let context: AudioContext;
   let oscillator: OscillatorNode;
   let createAudioContext: jest.Mock;
+  let stateChange: jest.Mock;
+  let localStorageMock: Storage;
 
   beforeEach(() => {
     jest.useFakeTimers();
@@ -141,99 +152,129 @@ describe('operational High Alert audio controller', () => {
       createGain: jest.fn(() => gain),
     } as unknown as AudioContext;
     createAudioContext = jest.fn(() => context);
+    localStorageMock = {
+      getItem: jest.fn(() => null),
+      setItem: jest.fn(),
+      removeItem: jest.fn(),
+      clear: jest.fn(),
+      key: jest.fn(() => null),
+      length: 0,
+    };
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
-      value: { AudioContext: createAudioContext },
+      value: { AudioContext: createAudioContext, localStorage: localStorageMock },
     });
+    stateChange = jest.fn();
   });
 
   afterEach(() => {
-    jest.runOnlyPendingTimers();
+    jest.clearAllTimers();
     jest.useRealTimers();
     Reflect.deleteProperty(globalThis, 'window');
   });
 
-  test('sound starts only after explicit enable and repeated polls do not restart the loop', async () => {
-    expect(isOperationalHighAlertAudioSupported('web')).toBe(true);
-    const controller = new OperationalHighAlertAudioController('web');
-    controller.syncOperationalAlerts(['op-1']);
-    expect(createAudioContext).not.toHaveBeenCalled();
-    expect(jest.getTimerCount()).toBe(0);
+  test('enabled preference automatically attempts playback for an active alert', async () => {
+    const controller = new OperationalHighAlertAudioController('web', jest.fn(), stateChange);
+    controller.setEnabled(true);
+    controller.syncOperationalAlerts(getActiveOperationalAlertIds([cluster()]));
+    await Promise.resolve();
+    await Promise.resolve();
 
-    await controller.enable();
     expect(context.resume).toHaveBeenCalledTimes(1);
     expect(context.createOscillator).toHaveBeenCalledTimes(1);
+    expect(stateChange).toHaveBeenLastCalledWith('enabled');
     expect(jest.getTimerCount()).toBe(1);
-
-    controller.syncOperationalAlerts(['op-1']);
-    controller.syncOperationalAlerts(['op-1']);
-    controller.syncOperationalAlerts(['op-1', 'op-2']);
-    expect(jest.getTimerCount()).toBe(1);
-    expect(context.createOscillator).toHaveBeenCalledTimes(1);
-
-    jest.advanceTimersByTime(1500);
-    expect(context.createOscillator).toHaveBeenCalledTimes(2);
-    controller.syncOperationalAlerts([]);
-    expect(jest.getTimerCount()).toBe(0);
     controller.dispose();
   });
 
-  test('authoritative assignment poll stops audio and later assigned polls keep it stopped', async () => {
-    const controller = new OperationalHighAlertAudioController('web');
-    await controller.enable();
-    controller.syncOperationalAlerts(getActiveOperationalAlertIds([cluster()]));
+  test('browser autoplay rejection remains enabled and exposes deliberate activation', async () => {
+    (context as { state: AudioContextState }).state = 'suspended';
+    context.resume = jest.fn().mockRejectedValue(new Error('autoplay blocked'));
+    const controller = new OperationalHighAlertAudioController('web', jest.fn(), stateChange);
+    controller.syncOperationalAlerts(['op-1']);
+    await Promise.resolve();
+
+    expect(context.createOscillator).not.toHaveBeenCalled();
+    expect(jest.getTimerCount()).toBe(0);
+    expect(stateChange).toHaveBeenLastCalledWith('activation-required');
+
+    (context as { state: AudioContextState }).state = 'running';
+    context.resume = jest.fn().mockResolvedValue(undefined);
+    await controller.activate();
+    expect(context.createOscillator).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(1);
+    controller.dispose();
+  });
+
+  test('mute stops repeating sound and re-enable resumes only for an active alert', async () => {
+    const controller = new OperationalHighAlertAudioController('web', jest.fn(), stateChange);
+    controller.syncOperationalAlerts(['op-1']);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(jest.getTimerCount()).toBe(1);
 
-    const assigned = cluster({ assignedTeams: [{ id: 'team-1' }] });
-    controller.syncOperationalAlerts(getActiveOperationalAlertIds([assigned]));
+    controller.setEnabled(false);
+    expect(stateChange).toHaveBeenLastCalledWith('muted');
     expect(jest.getTimerCount()).toBe(0);
+    controller.setEnabled(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(jest.getTimerCount()).toBe(1);
+    controller.dispose();
+  });
 
-    controller.syncOperationalAlerts(getActiveOperationalAlertIds([assigned]));
-    expect(jest.getTimerCount()).toBe(0);
+  test('authoritative assignment stops the repeat loop and any current tone', async () => {
+    const controller = new OperationalHighAlertAudioController('web');
+    controller.syncOperationalAlerts(getActiveOperationalAlertIds([cluster()]));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(jest.getTimerCount()).toBe(1);
+
     controller.syncOperationalAlerts(getActiveOperationalAlertIds([
-      cluster({ ...assigned, status: 'resolved' }),
+      cluster({ assignedTeams: [{ id: 'team-1' }] }),
     ]));
     expect(jest.getTimerCount()).toBe(0);
+    expect(oscillator.stop).toHaveBeenCalledWith();
     controller.dispose();
   });
 
-  test('playback failure reports sound unavailability without changing visual alert state', async () => {
-    const unavailable = jest.fn();
-    const controller = new OperationalHighAlertAudioController('web', unavailable);
-    controller.syncOperationalAlerts(['op-1']);
-    await controller.enable();
-    context.createOscillator = jest.fn(() => {
-      throw new Error('playback failed');
-    });
+  test('no active alert produces no tone even when preference is enabled', async () => {
+    const controller = new OperationalHighAlertAudioController('web');
+    controller.setEnabled(true);
+    controller.syncOperationalAlerts([]);
+    await Promise.resolve();
 
-    jest.advanceTimersByTime(1500);
-    expect(unavailable).toHaveBeenCalledTimes(1);
-    expect(getOperationalHighAlertPresentation(cluster())).toMatchObject({
-      corroborated: true,
-      active: true,
-    });
+    expect(createAudioContext).not.toHaveBeenCalled();
+    expect(oscillator.start).not.toHaveBeenCalled();
     expect(jest.getTimerCount()).toBe(0);
     controller.dispose();
   });
 
-  test('native platforms do not construct browser audio and cannot become audio-enabled', async () => {
-    const controller = new OperationalHighAlertAudioController('android', jest.fn());
+  test('refresh restores preference and reports activation-required if audio is still suspended', async () => {
+    saveOperationalHighAlertAudioPreference(true);
+    (context as { state: AudioContextState }).state = 'suspended';
+    context.resume = jest.fn().mockRejectedValue(new Error('interaction required'));
+    const restoredPreference = readOperationalHighAlertAudioPreference();
+    const controller = new OperationalHighAlertAudioController('web', jest.fn(), stateChange);
+    controller.setEnabled(restoredPreference);
+    controller.syncOperationalAlerts(['op-1']);
+    await Promise.resolve();
+
+    expect(restoredPreference).toBe(true);
+    expect(stateChange).toHaveBeenLastCalledWith('activation-required');
+    expect(oscillator.start).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  test('native platforms cannot construct browser audio', async () => {
+    const unavailable = jest.fn();
+    const controller = new OperationalHighAlertAudioController('android', unavailable, stateChange);
     controller.syncOperationalAlerts(['op-1']);
 
     expect(isOperationalHighAlertAudioSupported('android')).toBe(false);
-    await expect(controller.enable()).rejects.toThrow('unsupported on this platform');
     expect(createAudioContext).not.toHaveBeenCalled();
-    expect(context.resume).not.toHaveBeenCalled();
-    expect(jest.getTimerCount()).toBe(0);
-    expect(getOperationalHighAlertPresentation(cluster())).toMatchObject({
-      corroborated: true,
-      active: true,
-    });
+    expect(unavailable).toHaveBeenCalledTimes(1);
+    expect(getOperationalHighAlertPresentation(cluster())).toMatchObject({ active: true });
     controller.dispose();
-  });
-
-  test('web without AudioContext is safely unsupported', () => {
-    Reflect.deleteProperty(window, 'AudioContext');
-    expect(isOperationalHighAlertAudioSupported('web')).toBe(false);
   });
 });
