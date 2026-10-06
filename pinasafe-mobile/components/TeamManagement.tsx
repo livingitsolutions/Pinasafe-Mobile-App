@@ -252,10 +252,10 @@ export default function TeamManagement() {
         <Field label="Description"><TextArea value={form.description} onChangeText={description => setForm(value => ({ ...value, description }))} /></Field>
         <Field label="Team leader" hint="Choose an unassigned, active rescue member. A leader is required to create a team.">
           {eligibleToCreate.length === 0 ? <Banner title="No available responders" message="Invite a responder from Personnel, or review existing team assignments before creating a team." tone="info" /> : null}
-          <View style={styles.options}>{eligibleToCreate.map(member => {
+          <View accessibilityRole="radiogroup" accessibilityLabel="Team leader" style={styles.options}>{eligibleToCreate.map(member => {
             const id = member.user_id || '';
             const selected = form.teamLeaderId === id;
-            return <Pressable key={member.id} disabled={!id} onPress={() => selectLeader(id)} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} style={[styles.option, selected && styles.optionSelected]}>
+            return <Pressable key={member.id} disabled={!id} onPress={() => selectLeader(id)} accessibilityRole="radio" accessibilityState={{ checked: selected }} style={[styles.option, selected && styles.optionSelected]}>
               <Text style={styles.optionName}>{member.name}{selected ? ' — Leader' : ''}</Text>
             </Pressable>;
           })}</View>

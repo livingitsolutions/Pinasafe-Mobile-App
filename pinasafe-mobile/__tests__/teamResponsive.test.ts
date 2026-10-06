@@ -81,3 +81,65 @@ describe('response team member presentation', () => {
     expect(teamService.removeTeamMember).toHaveBeenCalledWith('team-1', 'responder-member');
   });
 });
+
+describe('create response team accessibility', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockWidth = 320;
+    mockHooks = createHookHarness();
+    mockHooks.slots.push(
+      [],
+      [
+        {
+          id: 'person-1',
+          user_id: 'user-1',
+          name: 'Responder One',
+          personnel_role: 'rescue_member',
+          is_active: true,
+          team_id: null,
+        },
+        {
+          id: 'person-2',
+          user_id: 'user-2',
+          name: 'Responder Two',
+          personnel_role: 'rescue_member',
+          is_active: true,
+          team_id: null,
+        },
+      ],
+      false,
+      '',
+      false,
+      true,
+      null,
+      { name: '', description: '', teamLeaderId: '', selected: [] },
+    );
+  });
+
+  test('team leader uses single-choice semantics while members remain multi-select', () => {
+    const tree = render();
+    const elements = collectElements(tree);
+
+    const leaderGroup = elements.find(
+      element =>
+        element.props.accessibilityRole === 'radiogroup' &&
+        element.props.accessibilityLabel === 'Team leader',
+    );
+
+    expect(leaderGroup).toBeDefined();
+
+    const radios = collectElements(leaderGroup).filter(
+      element => element.props.accessibilityRole === 'radio',
+    );
+
+    expect(radios).toHaveLength(2);
+    expect(radios.every(radio => typeof (radio.props.accessibilityState as { checked?: boolean } | undefined)?.checked === 'boolean')).toBe(true);
+
+    const checkboxes = elements.filter(
+      element => element.props.accessibilityRole === 'checkbox',
+    );
+
+    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes.every(checkbox => typeof (checkbox.props.accessibilityState as { checked?: boolean } | undefined)?.checked === 'boolean')).toBe(true);
+  });
+});
