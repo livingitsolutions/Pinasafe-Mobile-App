@@ -1,62 +1,63 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Linking, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, MapPin, RefreshCw, ShieldCheck } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService, isApiError, PrivateEvidenceItem } from '@/services/apiService';
 import { ActionBar, Banner, Button, Card, DetailItem, EmptyState, ErrorState, IconButton, LoadingState, PageHeader, Priority, Screen, Section, StatusBadge, TypeBadge } from '@/components/ui';
+import OperationalIncidentDetail from '@/components/OperationalIncidentDetail';
+import { getEmergencyReportMapUrl } from '@/utils/mapUrl';
 import { colors, radius, space, type } from '@/theme/tokens';
 
 type Report = {
   id: string; type: string; description: string; location: string; priority: string; status: 'pending' | 'dispatched' | 'responding' | 'resolved';
   created_at?: string; updated_at?: string; resolved_at?: string; assigned_team?: { id: string; name: string }; assigned_team_id?: string;
-  coordinates: { latitude: number; longitude: number } | null; reporter_name?: string; reporter_phone?: string;
+  coordinates: { latitude: number; longitude: number } | null; organization_id?: string; reporter_name?: string; reporter_phone?: string;
 };
 
-export function getEmergencyReportMapUrl(coordinates: unknown): string | null {
-  if (!coordinates || typeof coordinates !== 'object' || Array.isArray(coordinates)) return null;
-
-  const { latitude, longitude } = coordinates as { latitude?: unknown; longitude?: unknown };
-  if (
-    typeof latitude !== 'number'
-    || typeof longitude !== 'number'
-    || !Number.isFinite(latitude)
-    || !Number.isFinite(longitude)
-    || latitude < -90
-    || latitude > 90
-    || longitude < -180
-    || longitude > 180
-  ) {
-    return null;
-  }
-
-  return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=17/${latitude}/${longitude}`;
-}
+export { getEmergencyReportMapUrl };
 
 export default function IncidentDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [report, setReport] = useState<Report | null>(null);
   const [evidence, setEvidence] = useState<PrivateEvidenceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
   const [evidenceError, setEvidenceError] = useState('');
+  const requestIdRef = useRef(0);
+  const mountedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!id) return;
+    if (!mountedRef.current) return;
+    const requestId = ++requestIdRef.current;
     setLoading(true); setError(''); setEvidenceError('');
     try {
-      const [reportResponse, evidenceResponse] = await Promise.allSettled([apiService.getEmergencyReport(id), apiService.getReportEvidence(id)]);
+      const [reportResponse, evidenceResponse] = await Promise.allSettled([apiService.getEmergencyReport(id), isAdmin ? Promise.resolve(null) : apiService.getReportEvidence(id)]);
+      if (!mountedRef.current || requestId !== requestIdRef.current) return;
       if (reportResponse.status === 'rejected') throw reportResponse.reason;
       setReport(reportResponse.value.data?.data || null);
-      if (evidenceResponse.status === 'fulfilled') setEvidence(evidenceResponse.value.data?.data || []);
+      if (evidenceResponse.status === 'fulfilled') setEvidence(evidenceResponse.value?.data?.data || []);
       else setEvidenceError(isApiError(evidenceResponse.reason) && evidenceResponse.reason.status === 403 ? 'Evidence is restricted for this assignment.' : 'Evidence could not be loaded. Try refreshing the signed link.');
     } catch (cause) {
+      if (!mountedRef.current || requestId !== requestIdRef.current) return;
       setError(isApiError(cause) && cause.status === 403 ? 'You no longer have access to this incident.' : 'The incident could not be loaded.');
-    } finally { setLoading(false); }
-  }, [id]);
+    } finally {
+      if (mountedRef.current && requestId === requestIdRef.current) setLoading(false);
+    }
+  }, [id, isAdmin]);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    const requestIdRefCurrent = requestIdRef;
+    return () => {
+      mountedRef.current = false;
+      requestIdRefCurrent.current++;
+    };
+  }, []);
   useEffect(() => { load(); }, [load]);
   const nextStatus = useMemo(() => report?.status === 'dispatched' ? 'responding' : report?.status === 'responding' ? 'resolved' : null, [report?.status]);
   const mapUrl = report ? getEmergencyReportMapUrl(report.coordinates) : null;
@@ -76,6 +77,7 @@ export default function IncidentDetail() {
 
   if (loading) return <Screen><PageHeader eyebrow="Incident record" title="Loading incident" /><LoadingState rows={4} /></Screen>;
   if (error && !report) return <Screen><PageHeader title="Incident unavailable" action={<IconButton label="Go back" onPress={router.back}><ArrowLeft size={20} color={colors.ink} /></IconButton>} /><ErrorState message={error} onRetry={load} /></Screen>;
+  if (report && isAdmin) return <OperationalIncidentDetail report={report} role={user?.role} routeId={id} />;
   if (!report) return <Screen><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
 
   return <Screen>

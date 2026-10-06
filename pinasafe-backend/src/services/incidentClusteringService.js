@@ -255,43 +255,7 @@ class IncidentClusteringService {
     return subscriptions;
   }
 
-  async getClusterInfo(clusterId) {
-    const supabase = getClient();
-
-    const { data: incidents, error: incidentsError } = await supabase
-      .from('emergency_reports')
-      .select(`
-        *,
-        reporter:users!reported_by(name, phone)
-      `)
-      .eq('cluster_id', clusterId);
-
-    if (incidentsError) {
-      safeLogger.error('clustering.incidents_fetch_failed');
-      throw incidentsError;
-    }
-
-    const { data: subscribers, error: subscribersError } = await supabase
-      .from('incident_cluster_subscribers')
-      .select('user_id')
-      .eq('cluster_id', clusterId);
-
-    if (subscribersError) {
-      safeLogger.error('clustering.subscribers_fetch_failed');
-      throw subscribersError;
-    }
-
-    const { data: updates, error: updatesError } = await supabase
-      .from('incident_updates')
-      .select('*')
-      .eq('cluster_id', clusterId)
-      .order('created_at', { ascending: false });
-
-    if (updatesError) {
-      safeLogger.error('clustering.updates_fetch_failed');
-      throw updatesError;
-    }
-
+  summarizeOperationalMembers(clusterId, incidents) {
     const legacyIncidents = incidents || [];
     const memberReports = [...legacyIncidents].sort((left, right) => {
       const createdAtOrder = String(left.created_at).localeCompare(String(right.created_at));
@@ -371,9 +335,90 @@ class IncidentClusteringService {
           .filter(Boolean)
           .map((teamId) => [teamId, { id: teamId }])
       ).values()],
-      memberReports: operationalMemberReports,
+      memberReports: operationalMemberReports
+    };
+  }
+
+  async getOperationalClusters(organizationId) {
+    if (!organizationId) {
+      throw new Error('organizationId is required');
+    }
+
+    const { data: reports, error } = await getClient()
+      .from('emergency_reports')
+      .select('id, cluster_id, organization_id, assigned_team_id, reported_by, type, description, location, latitude, longitude, priority, status, created_at')
+      .eq('organization_id', organizationId);
+
+    if (error) {
+      safeLogger.error('clustering.operational_fetch_failed');
+      throw error;
+    }
+
+    // Only the caller's own members are grouped, so aggregates never include other organizations.
+    const groups = new Map();
+    for (const report of (reports || []).filter((item) => item.organization_id === organizationId)) {
+      const operationalId = report.cluster_id || report.id;
+      if (!groups.has(operationalId)) {
+        groups.set(operationalId, { clusterId: report.cluster_id || null, members: [] });
+      }
+      groups.get(operationalId).members.push(report);
+    }
+
+    return [...groups.entries()]
+      .map(([operationalId, { clusterId, members }]) => {
+        const { memberReports, ...summary } = this.summarizeOperationalMembers(operationalId, members);
+        return { operationalId, ...summary, clusterId, memberReports };
+      })
+      .sort((left, right) => (
+        (Date.parse(right.latestReportedAt) || 0) - (Date.parse(left.latestReportedAt) || 0)
+        || String(left.operationalId).localeCompare(String(right.operationalId))
+      ));
+  }
+
+  async getClusterInfo(clusterId) {
+    const supabase = getClient();
+
+    const { data: incidents, error: incidentsError } = await supabase
+      .from('emergency_reports')
+      .select(`
+        *,
+        reporter:users!reported_by(name, phone)
+      `)
+      .eq('cluster_id', clusterId);
+
+    if (incidentsError) {
+      safeLogger.error('clustering.incidents_fetch_failed');
+      throw incidentsError;
+    }
+
+    const { data: subscribers, error: subscribersError } = await supabase
+      .from('incident_cluster_subscribers')
+      .select('user_id')
+      .eq('cluster_id', clusterId);
+
+    if (subscribersError) {
+      safeLogger.error('clustering.subscribers_fetch_failed');
+      throw subscribersError;
+    }
+
+    const { data: updates, error: updatesError } = await supabase
+      .from('incident_updates')
+      .select('*')
+      .eq('cluster_id', clusterId)
+      .order('created_at', { ascending: false });
+
+    if (updatesError) {
+      safeLogger.error('clustering.updates_fetch_failed');
+      throw updatesError;
+    }
+
+    const legacyIncidents = incidents || [];
+    const summary = this.summarizeOperationalMembers(clusterId, legacyIncidents);
+
+    return {
+      ...summary,
       incidents: legacyIncidents,
-      totalReports: memberReports.length,
+      totalReports: summary.reportCount,
       subscribers: subscribers.length,
       updates: updates || []
     };
