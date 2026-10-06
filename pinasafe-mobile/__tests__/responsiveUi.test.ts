@@ -50,6 +50,53 @@ describe.each([320, 360, 375, 390, 430, 768, 1280])('shared layout at %ipx', wid
     expect(open).toHaveBeenCalledTimes(1);
   });
 
+  test('ListRow separates leading and trailing metadata from copy on mobile', () => {
+    const tree = ListRow({
+      title: 'BFP Responder 1',
+      subtitle: 'responder@example.test',
+      leading: React.createElement('Text', null, 'Fire'),
+      trailing: React.createElement('Text', null, 'Active'),
+    });
+
+    const fragment = React.Children.only(tree.props.children) as React.ReactElement<Props>;
+    const children = React.Children.toArray(fragment.props.children as React.ReactNode) as React.ReactElement<Props>[];
+    expect(children).toHaveLength(3);
+
+    const leadingStyle = flatten(children[0].props.style);
+    const copyStyle = flatten(children[1].props.style);
+    const trailingStyle = flatten(children[2].props.style);
+
+    if (width < 680) {
+      expect(leadingStyle).toMatchObject({
+        width: '100%',
+        alignItems: 'flex-start',
+      });
+      expect(copyStyle).toMatchObject({
+        width: '100%',
+        flex: 0,
+      });
+      expect(trailingStyle).toMatchObject({
+        width: '100%',
+        alignItems: 'flex-start',
+      });
+      expect(trailingStyle.marginTop).toBeDefined();
+    } else {
+      expect(leadingStyle.width).toBeUndefined();
+      expect(copyStyle.width).toBeUndefined();
+      expect(trailingStyle.width).toBeUndefined();
+      expect(trailingStyle.marginTop).toBeUndefined();
+    }
+
+    expect(collectText(tree)).toEqual(
+      expect.arrayContaining([
+        'Fire',
+        'BFP Responder 1',
+        'responder@example.test',
+        'Active',
+      ])
+    );
+  });
+
   test('action groups stack on mobile and retain every action', () => {
     const tree = ActionGroup({ children: ['Respond', 'Open details'].map(label => React.createElement(Button, { key: label, label, onPress: jest.fn() })) });
     expect(flatten(tree.props.style).flexDirection).toBe(width < 680 ? 'column' : 'row');
