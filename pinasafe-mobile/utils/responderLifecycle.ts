@@ -4,7 +4,7 @@ export type IncidentLifecycleStatus = 'pending' | 'dispatched' | 'responding' | 
 export type ResponderTargetStatus = 'responding' | 'resolved';
 
 export interface ResponderLifecycleAction {
-  label: 'Start Responding' | 'Mark Resolved';
+  label: 'Respond' | 'Mark Resolved';
   targetStatus: ResponderTargetStatus;
 }
 
@@ -12,7 +12,7 @@ export const getResponderLifecycleAction = (
   status: IncidentLifecycleStatus
 ): ResponderLifecycleAction | null => {
   if (status === 'dispatched') {
-    return { label: 'Start Responding', targetStatus: 'responding' };
+    return { label: 'Respond', targetStatus: 'responding' };
   }
   if (status === 'responding') {
     return { label: 'Mark Resolved', targetStatus: 'resolved' };

@@ -12,7 +12,7 @@ jest.mock('react-native', () => ({ Platform: { OS: 'web' } }));
 describe('responder lifecycle', () => {
   test('A/B/E/F. exposes only the authoritative responder transitions', () => {
     expect(getResponderLifecycleAction('dispatched')).toEqual({
-      label: 'Start Responding',
+      label: 'Respond',
       targetStatus: 'responding',
     });
     expect(getResponderLifecycleAction('responding')).toEqual({

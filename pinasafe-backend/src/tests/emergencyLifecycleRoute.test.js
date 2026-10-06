@@ -409,8 +409,7 @@ describe('Emergency dispatch and response lifecycle (B6.12)', () => {
       ['O. resolved -> pending rejected', dispatchedReport({ status: 'resolved' }), 'pending'],
       ['O. resolved -> dispatched rejected', dispatchedReport({ status: 'resolved' }), 'dispatched'],
       ['O. resolved -> responding rejected', dispatchedReport({ status: 'resolved' }), 'responding'],
-      ['P. dispatched -> dispatched (same-state) rejected', dispatchedReport({ status: 'dispatched' }), 'dispatched'],
-      ['P. responding -> responding (same-state) rejected', dispatchedReport({ status: 'responding' }), 'responding']
+      ['P. dispatched -> dispatched (same-state) rejected', dispatchedReport({ status: 'dispatched' }), 'dispatched']
     ])('%s', async (_name, report, targetStatus) => {
       const reportQuery = buildQuery({ data: report, error: null });
       const teamQuery = buildQuery({ data: teamRecord(), error: null });
@@ -706,6 +705,136 @@ describe('Emergency dispatch and response lifecycle (B6.12)', () => {
       mockFromSequence([reportQuery, teamQuery]);
 
       const response = await request(buildApp(responder))
+        .put(`/emergency-reports/${REPORT_ID}`)
+        .send({ status: 'responding' });
+
+      expect(response.status).toBe(403);
+    });
+  });
+
+  describe('V3.6B Respond acknowledgement', () => {
+    const SIBLING_ID = '123e4567-e89b-12d3-a456-426614174099';
+    const authorizedQueries = (report) => [
+      buildQuery({ data: report, error: null }),
+      buildQuery({ data: teamRecord(), error: null }),
+      buildQuery({ data: { id: 'member-1' }, error: null })
+    ];
+
+    test('Respond persists responded_at with the authenticated responder and ignores client identity', async () => {
+      const respondedReport = {
+        ...dispatchedReport({ cluster_id: null }),
+        status: 'responding',
+        responder_id: responder.id,
+        responded_at: '2026-10-06T00:00:00.000Z'
+      };
+      const updateQuery = buildQuery({ data: respondedReport, error: null });
+      const { rpc } = mockFromSequence([...authorizedQueries(dispatchedReport()), updateQuery]);
+
+      const response = await request(buildApp(responder))
+        .put(`/emergency-reports/${REPORT_ID}`)
+        .send({ status: 'responding', responder_id: otherResponder.id, responded_at: '1999-01-01T00:00:00.000Z' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.message).toBe('Emergency report updated successfully');
+      expect(response.body.data.status).toBe('responding');
+      expect(response.body.data.responded_at).toBe(respondedReport.responded_at);
+
+      const payload = updateQuery.update.mock.calls[0][0];
+      expect(payload.status).toBe('responding');
+      expect(payload.responder_id).toBe(responder.id);
+      expect(typeof payload.responded_at).toBe('string');
+      expect(payload.responded_at).not.toBe('1999-01-01T00:00:00.000Z');
+      expect(Number.isNaN(Date.parse(payload.responded_at))).toBe(false);
+      expect(payload.updated_at).toBe(payload.responded_at);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    test('Respond updates only the target report and never its siblings', async () => {
+      const updateQuery = buildQuery({
+        data: { ...dispatchedReport({ cluster_id: SIBLING_ID }), status: 'responding', responder_id: responder.id },
+        error: null
+      });
+      const { from, rpc } = mockFromSequence([
+        ...authorizedQueries(dispatchedReport({ cluster_id: SIBLING_ID })),
+        updateQuery
+      ]);
+
+      const response = await request(buildApp(responder))
+        .put(`/emergency-reports/${REPORT_ID}`)
+        .send({ status: 'responding' });
+
+      expect(response.status).toBe(200);
+      expect(from).toHaveBeenCalledTimes(4);
+      expect(updateQuery.update).toHaveBeenCalledTimes(1);
+      expect(updateQuery.eq).toHaveBeenCalledWith('id', REPORT_ID);
+      expect(updateQuery.eq).not.toHaveBeenCalledWith('cluster_id', expect.anything());
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    test('Respond retry on an already-responding report is idempotent and writes nothing', async () => {
+      const current = dispatchedReport({
+        status: 'responding',
+        responder_id: responder.id,
+        responded_at: '2026-10-06T00:00:00.000Z'
+      });
+      const refetchQuery = buildQuery({ data: current, error: null });
+      const { rpc } = mockFromSequence([...authorizedQueries(current), refetchQuery]);
+
+      const response = await request(buildApp(responder))
+        .put(`/emergency-reports/${REPORT_ID}`)
+        .send({ status: 'responding' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.message).toBe('Emergency report updated successfully');
+      expect(response.body.data.responded_at).toBe(current.responded_at);
+      expect(response.body.data.responder_id).toBe(responder.id);
+      expect(refetchQuery.update).not.toHaveBeenCalled();
+      expect(refetchQuery.eq).toHaveBeenCalledWith('organization_id', ORG_ID);
+      expect(refetchQuery.eq).toHaveBeenCalledWith('assigned_team_id', TEAM_ID);
+      expect(refetchQuery.eq).toHaveBeenCalledWith('status', 'responding');
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    test('Respond retry fails closed with 409 if the report changed concurrently', async () => {
+      const current = dispatchedReport({ status: 'responding', responder_id: responder.id });
+      mockFromSequence([...authorizedQueries(current), buildQuery({ data: null, error: null })]);
+
+      const response = await request(buildApp(responder))
+        .put(`/emergency-reports/${REPORT_ID}`)
+        .send({ status: 'responding' });
+
+      expect(response.status).toBe(409);
+    });
+
+    test('resolved report cannot be reopened by Respond', async () => {
+      const { rpc } = mockFromSequence(authorizedQueries(dispatchedReport({ status: 'resolved' })));
+
+      const response = await request(buildApp(responder))
+        .put(`/emergency-reports/${REPORT_ID}`)
+        .send({ status: 'responding' });
+
+      expect(response.status).toBe(409);
+      expect(rpc).not.toHaveBeenCalled();
+    });
+
+    test('wrong-team responder cannot Respond or retry', async () => {
+      mockFromSequence([
+        buildQuery({ data: dispatchedReport({ status: 'responding' }), error: null }),
+        buildQuery({ data: teamRecord(), error: null }),
+        buildQuery({ data: null, error: null })
+      ]);
+
+      const response = await request(buildApp(otherResponder))
+        .put(`/emergency-reports/${REPORT_ID}`)
+        .send({ status: 'responding' });
+
+      expect(response.status).toBe(403);
+    });
+
+    test('cross-org responder cannot Respond', async () => {
+      mockFromSequence([buildQuery({ data: dispatchedReport(), error: null })]);
+
+      const response = await request(buildApp(crossOrgResponder))
         .put(`/emergency-reports/${REPORT_ID}`)
         .send({ status: 'responding' });
 

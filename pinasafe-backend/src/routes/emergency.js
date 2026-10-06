@@ -462,19 +462,42 @@ router.put('/:id', authenticateToken, requireRole(['responder']), validateUUID('
       });
     }
 
+    // A repeated Respond is idempotent: no write, so the first responder and
+    // responded_at are preserved.
+    if (status === 'responding' && expectedPreviousStatus === 'responding') {
+      const { data: currentReport, error: currentError } = await supabase
+        .from('emergency_reports')
+        .select('*')
+        .eq('id', id)
+        .eq('organization_id', user.organization_id)
+        .eq('assigned_team_id', existingReport.assigned_team_id)
+        .eq('status', 'responding')
+        .maybeSingle();
+
+      if (currentError || !currentReport) {
+        return res.status(409).json({ error: 'Emergency report state changed; please retry' });
+      }
+
+      return res.json({
+        message: 'Emergency report updated successfully',
+        data: formatEmergencyReport(currentReport)
+      });
+    }
+
     if (OPERATIONAL_TRANSITIONS[expectedPreviousStatus] !== status) {
       return res.status(409).json({ error: `Invalid status transition from ${expectedPreviousStatus} to ${status}` });
     }
 
-    // Preserve the accepted dispatched -> responding behavior unchanged.
+    const now = new Date().toISOString();
     const updateData = {
       status,
       notes: notes ?? null,
-      updated_at: new Date().toISOString()
+      updated_at: now
     };
 
     if (expectedPreviousStatus === 'dispatched') {
       updateData.responder_id = user.id;
+      updateData.responded_at = now;
     }
 
     const { data: updatedReport, error } = await supabase

@@ -1051,6 +1051,8 @@ export interface EmergencyReport {
   useAIClassification?: boolean;
   dispatches?: AlertDispatch[];
   assigned_team_id?: string;
+  assigned_at?: string | null;
+  responded_at?: string | null;
   assigned_team?: {
     id: string;
     name: string;
@@ -1224,15 +1226,17 @@ export function EmergencyProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    // Only process primary incidents (those not in the clusteredReportIds set)
-    reports.forEach(report => {
-      // Skip if this report is a related incident in a cluster
-      if (clusteredReportIds.has(report.id)) {
-        reactNativeAudioAlertService.stopContinuousAlertForReport(report.id);
-        return;
-      }
+    // Responders are alerted only by the assignment alert on the Assignments
+    // screen; this legacy per-report alarm is retained for admins alone.
+    const legacyAdminAlarm = user?.role === 'admin';
 
-      if (report.status === 'pending' && !report.assigned_team_id) {
+    reports.forEach(report => {
+      if (
+        legacyAdminAlarm &&
+        !clusteredReportIds.has(report.id) &&
+        report.status === 'pending' &&
+        !report.assigned_team_id
+      ) {
         reactNativeAudioAlertService.startContinuousAlert(
           report.id,
           report.type,
@@ -1242,29 +1246,6 @@ export function EmergencyProvider({ children }: { children: React.ReactNode }) {
           report.status,
           report.assigned_team_id
         );
-      } else if (report.status === 'dispatched' && report.assigned_team_id) {
-        // Check if the user is a member of the assigned team
-        const isAssignedTeamMember = user?.teamId === report.assigned_team_id;
-
-        console.log(`🔍 Checking alert for report ${report.id}:`);
-        console.log(`   - Assigned team: ${report.assigned_team_id}`);
-        console.log(`   - User team: ${user?.teamId}`);
-        console.log(`   - Is member: ${isAssignedTeamMember}`);
-
-        if (isAssignedTeamMember) {
-          console.log(`🚨 STARTING ALERT: Report ${report.id} assigned to your team`);
-          reactNativeAudioAlertService.startContinuousAlert(
-            report.id,
-            report.type,
-            report.priority,
-            report.location || 'Unknown location',
-            'TEAM ASSIGNMENT: ' + report.description,
-            report.status,
-            report.assigned_team_id
-          );
-        } else {
-          reactNativeAudioAlertService.stopContinuousAlertForReport(report.id);
-        }
       } else {
         reactNativeAudioAlertService.stopContinuousAlertForReport(report.id);
       }
