@@ -285,13 +285,12 @@ describe('Install PinaSafe call to action', () => {
     expect(render({ presentation: 'hidden' }).tree).toBeNull();
   });
 
-  test('Chromium shows Install PinaSafe and Not now', () => {
+  test('Chromium shows Install PinaSafe without a redundant dismissal action', () => {
     const { elements, text } = render({ presentation: 'prompt' });
     const install = elements.find(element => element.props.label === 'Install PinaSafe');
     (install!.props.onPress as () => void)();
     expect(mockInstall.install).toHaveBeenCalled();
-    (elements.find(element => element.props.label === 'Not now')!.props.onPress as () => void)();
-    expect(mockInstall.dismiss).toHaveBeenCalled();
+    expect(elements.some(element => element.props.label === 'Not now')).toBe(false);
     expect(text).toContain('internet connection is still needed');
   });
 

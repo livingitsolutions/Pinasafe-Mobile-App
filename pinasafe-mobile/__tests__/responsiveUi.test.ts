@@ -45,7 +45,9 @@ describe.each([320, 360, 375, 390, 430, 768, 1280])('shared layout at %ipx', wid
     const details = 'responder-with-a-long-address@example.test · +63 912 345 6789';
     const open = jest.fn();
     const tree = ListRow({ title: location, subtitle: details, onPress: open });
-    expect(flatten(tree.props.style instanceof Function ? tree.props.style({ pressed: false }) : tree.props.style).flexDirection).toBe(width < 680 ? 'column' : 'row');
+    const rowStyle = flatten(tree.props.style instanceof Function ? tree.props.style({ pressed: false }) : tree.props.style);
+    expect(rowStyle.flexDirection).toBe(width < 680 ? 'column' : 'row');
+    expect(rowStyle.gap).toBe(width < 680 ? 12 : 8);
     expect(collectText(tree)).toEqual(expect.arrayContaining([location, details]));
     expect(collectElements(tree).filter(element => element.type === 'Text').every(element => element.props.numberOfLines === undefined)).toBe(true);
     (tree.props.onPress as () => void)();

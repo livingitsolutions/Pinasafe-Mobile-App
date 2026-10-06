@@ -6,7 +6,7 @@ import { Banner, Button, Card } from '@/components/ui';
 import { colors, radius, space, type } from '@/theme/tokens';
 
 export default function InstallPrompt({ manual = false }: { manual?: boolean } = {}) {
-  const { presentation: promotion, manualPresentation, status, install, dismiss } = useInstallPrompt();
+  const { presentation: promotion, manualPresentation, status, install } = useInstallPrompt();
   const presentation = manual ? manualPresentation : promotion;
 
   if (status === 'installed') return null;
@@ -28,7 +28,6 @@ export default function InstallPrompt({ manual = false }: { manual?: boolean } =
       {status === 'accepted' ? <Text style={styles.message}>Installation is not confirmed yet. Complete any remaining browser steps.</Text> : null}
       <View style={styles.actions}>
         {prompt ? <Button variant="secondary" label="Install PinaSafe" onPress={() => { void install(); }} loading={status === 'prompting'} /> : null}
-        {!manual ? <Button variant="quiet" label="Not now" onPress={dismiss} /> : null}
       </View>
     </View>
   </Card>;
