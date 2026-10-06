@@ -22,7 +22,8 @@ const cluster = (overrides: Partial<OperationalCluster> = {}): OperationalCluste
   operationalId: 'c-1', clusterId: 'c-1', type: 'fire', status: 'pending', location: 'Main Street',
   latitude: 10, longitude: 124, coordinates: { latitude: 10, longitude: 124 },
   firstReportedAt: '2026-10-05T01:00:00.000Z', latestReportedAt: '2026-10-05T02:00:00.000Z',
-  reportCount: 2, distinctReporterCount: 1, priority: 'high', assignedTeams: [],
+  reportCount: 2, distinctReporterCount: 1, corroborated: false, acknowledged: false,
+  priority: 'high', assignedTeams: [],
   memberReports: [member({ id: 'c-1' }), member({ id: 'r-2', created_at: '2026-10-05T02:00:00.000Z' })], ...overrides,
 });
 

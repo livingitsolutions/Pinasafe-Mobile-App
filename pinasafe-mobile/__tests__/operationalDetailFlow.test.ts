@@ -89,7 +89,8 @@ const cluster = (id: string, members: OperationalMemberReport[], status: Operati
   operationalId: id, clusterId: id, type: 'fire', status, location: `${id} location`,
   latitude: 10, longitude: 124, coordinates: { latitude: 10, longitude: 124 },
   firstReportedAt: '2026-10-05T01:00:00.000Z', latestReportedAt: '2026-10-05T02:00:00.000Z',
-  reportCount: members.length, distinctReporterCount: 0, priority: 'medium', assignedTeams: [], memberReports: members,
+  reportCount: members.length, distinctReporterCount: 0, corroborated: false, acknowledged: false,
+  priority: 'medium', assignedTeams: [], memberReports: members,
 });
 
 const clusterResponse = (item: OperationalCluster) => ({ data: { data: [item] } });

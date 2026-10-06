@@ -6,32 +6,54 @@ import { colors, radius, space, type } from '@/theme/tokens';
 import type { PrivateEvidenceItem } from '@/services/apiService';
 import type { OperationalCluster, OperationalMemberReport } from '@/types/operationalCluster';
 import { formatOperationalTime, formatReportCount, getOperationalLocation } from '@/utils/operationalCluster';
+import { getOperationalHighAlertPresentation } from '@/utils/operationalHighAlert';
 
 export type MemberEvidenceState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ready'; items: PrivateEvidenceItem[] };
 
-export function OperationalIncidentCard({ cluster, onOpen, onOpenMap }: {
+export function OperationalIncidentCard({ cluster, onOpen, onOpenMap, isAdmin = false, acknowledging = false, acknowledgementError, onAcknowledge }: {
   cluster: OperationalCluster;
   onOpen: () => void;
   onOpenMap: (url: string) => void;
+  isAdmin?: boolean;
+  acknowledging?: boolean;
+  acknowledgementError?: string;
+  onAcknowledge?: () => void;
 }) {
   const location = getOperationalLocation(cluster);
   const subtitle = `${formatReportCount(cluster.reportCount)} · First reported ${formatOperationalTime(cluster.firstReportedAt)} · Latest report ${formatOperationalTime(cluster.latestReportedAt)}`;
+  const alert = getOperationalHighAlertPresentation(cluster);
 
-  return <ListRow
-    onPress={onOpen}
-    leading={<TypeBadge value={cluster.type || 'incident'} />}
-    title={location.text}
-    subtitle={subtitle}
-    trailing={<View style={styles.rowActions}>
-      <StatusBadge value={cluster.status} />
-      {cluster.priority ? <Priority value={cluster.priority} /> : null}
-      {location.mapUrl ? <Button variant="quiet" label="Open in Maps" onPress={() => onOpenMap(location.mapUrl as string)} icon={<MapPin size={16} color={colors.ink} />} /> : null}
-      <Button variant="secondary" label="View Incident" onPress={onOpen} />
-    </View>}
-  />;
+  return <>
+    {alert.corroborated ? <View style={styles.highAlert}>
+      <Text style={styles.highAlertTitle}>{alert.label}</Text>
+      {alert.acknowledged ? <Text style={styles.acknowledged}>Acknowledged</Text> : null}
+      <Text style={styles.highAlertCopy}>
+        Priority {cluster.priority?.toUpperCase() ?? 'not set'} indicates urgency; corroboration indicates independent confirmation.
+      </Text>
+      {alert.active && isAdmin && onAcknowledge ? <Button
+        variant="danger"
+        label={acknowledgementError ? 'Retry Acknowledge Alert' : 'Acknowledge Alert'}
+        onPress={onAcknowledge}
+        loading={acknowledging}
+      /> : null}
+      {acknowledgementError ? <Text style={styles.acknowledgementError}>{acknowledgementError}</Text> : null}
+    </View> : null}
+    <ListRow
+      onPress={onOpen}
+      leading={<TypeBadge value={cluster.type || 'incident'} />}
+      title={location.text}
+      subtitle={subtitle}
+      trailing={<View style={styles.rowActions}>
+        <StatusBadge value={cluster.status} />
+        {cluster.priority ? <Priority value={cluster.priority} /> : null}
+        {location.mapUrl ? <Button variant="quiet" label="Open in Maps" onPress={() => onOpenMap(location.mapUrl as string)} icon={<MapPin size={16} color={colors.ink} />} /> : null}
+        <Button variant="secondary" label="View Incident" onPress={onOpen} />
+      </View>}
+    />
+  </>;
 }
 
 export function OperationalIncidentHeader({ cluster, onOpenMap }: { cluster: OperationalCluster; onOpenMap: (url: string) => void }) {
@@ -97,6 +119,11 @@ export function OperationalMemberSection({ member, index, evidence, canDispatch,
 }
 
 const styles = StyleSheet.create({
+  highAlert: { gap: space.sm, padding: space.md, marginBottom: space.md, borderRadius: radius.md, borderWidth: 2, borderColor: colors.critical, backgroundColor: colors.criticalSoft },
+  highAlertTitle: { ...type.heading, color: colors.critical },
+  highAlertCopy: { ...type.body, color: colors.ink },
+  acknowledged: { ...type.label, color: colors.success },
+  acknowledgementError: { ...type.caption, color: colors.critical },
   rowActions: { alignItems: 'flex-end', gap: space.sm, maxWidth: 200 },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, alignItems: 'center' },
   count: { ...type.heading, color: colors.ink, marginTop: space.lg },

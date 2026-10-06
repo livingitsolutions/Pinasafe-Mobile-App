@@ -364,15 +364,77 @@ class IncidentClusteringService {
       groups.get(operationalId).members.push(report);
     }
 
+    const operationalIds = [...groups.keys()];
+    let acknowledgements = [];
+    if (operationalIds.length > 0) {
+      const { data, error: acknowledgementError } = await getClient()
+        .from('operational_incident_acknowledgements')
+        .select('operational_id')
+        .eq('organization_id', organizationId)
+        .in('operational_id', operationalIds);
+
+      if (acknowledgementError) {
+        safeLogger.error('clustering.operational_acknowledgements_fetch_failed');
+        throw acknowledgementError;
+      }
+      acknowledgements = data || [];
+    }
+    const acknowledgementsById = new Map(
+      acknowledgements.map((acknowledgement) => [acknowledgement.operational_id, acknowledgement])
+    );
+
     return [...groups.entries()]
       .map(([operationalId, { clusterId, members }]) => {
         const { memberReports, ...summary } = this.summarizeOperationalMembers(operationalId, members);
-        return { operationalId, ...summary, clusterId, memberReports };
+        const acknowledgement = acknowledgementsById.get(operationalId);
+        return {
+          operationalId,
+          ...summary,
+          clusterId,
+          memberReports,
+          corroborated: summary.reportCount >= 2 && summary.distinctReporterCount >= 2,
+          acknowledged: Boolean(acknowledgement)
+        };
       })
       .sort((left, right) => (
         (Date.parse(right.latestReportedAt) || 0) - (Date.parse(left.latestReportedAt) || 0)
         || String(left.operationalId).localeCompare(String(right.operationalId))
       ));
+  }
+
+  async acknowledgeOperationalIncident(organizationId, operationalId, userId) {
+    const incident = (await this.getOperationalClusters(organizationId))
+      .find((item) => item.operationalId === operationalId);
+
+    if (!incident) {
+      return { status: 'not_found' };
+    }
+    if (!incident.corroborated || incident.status === 'resolved') {
+      return { status: 'not_acknowledgeable' };
+    }
+    if (incident.acknowledged) {
+      return { status: 'acknowledged' };
+    }
+
+    const supabase = getClient();
+    const acknowledgement = {
+      organization_id: organizationId,
+      operational_id: operationalId,
+      acknowledged_by: userId
+    };
+    const { error } = await supabase
+      .from('operational_incident_acknowledgements')
+      .insert(acknowledgement);
+
+    if (error?.code === '23505') {
+      return { status: 'acknowledged' };
+    }
+    if (error) {
+      safeLogger.error('clustering.operational_acknowledgement_create_failed');
+      throw error;
+    }
+
+    return { status: 'acknowledged' };
   }
 
   async getClusterInfo(clusterId) {

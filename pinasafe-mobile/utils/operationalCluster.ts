@@ -101,6 +101,8 @@ export function buildSingleReportOperational(report: SingleReportSource): Operat
     reportCount: 1,
     // Reporter identity is unavailable in this fallback; do not infer corroboration.
     distinctReporterCount: 0,
+    corroborated: false,
+    acknowledged: false,
     priority,
     assignedTeams: report.assigned_team_id ? [{ id: report.assigned_team_id }] : [],
     memberReports: [{
