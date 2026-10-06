@@ -42,20 +42,44 @@ const report = (overrides = {}) => ({
 });
 
 let queries;
+let acknowledgementRows;
+let reportQuery;
+let acknowledgementQuery;
+let acknowledgementWritePending;
 const mockReports = (rows, error = null) => {
   queries = [];
-  const query = {
+  acknowledgementRows = [];
+  acknowledgementWritePending = false;
+  reportQuery = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     then: (resolve, reject) => Promise.resolve({ data: rows, error }).then(resolve, reject)
   };
+  acknowledgementQuery = {
+    select: jest.fn(() => {
+      acknowledgementWritePending = false;
+      return acknowledgementQuery;
+    }),
+    eq: jest.fn().mockReturnThis(),
+    in: jest.fn().mockReturnThis(),
+    insert: jest.fn((row) => {
+      acknowledgementWritePending = true;
+      acknowledgementRows.push({ ...row, acknowledged_at: '2026-10-06T00:00:00.000Z' });
+      return acknowledgementQuery;
+    }),
+    then: (resolve, reject) => {
+      const write = acknowledgementWritePending;
+      acknowledgementWritePending = false;
+      return Promise.resolve({ data: write ? null : acknowledgementRows, error: null }).then(resolve, reject);
+    }
+  };
   getClient.mockReturnValue({
     from: jest.fn((table) => {
       queries.push(table);
-      return query;
+      return table === 'emergency_reports' ? reportQuery : acknowledgementQuery;
     })
   });
-  return query;
+  return reportQuery;
 };
 
 const app = () => {
@@ -143,6 +167,8 @@ describe('GET /clusters/operational', () => {
       expect(item.operationalId).toBe(CLUSTER_A);
       expect(item.clusterId).toBe(CLUSTER_A);
       expect(item.reportCount).toBe(2);
+      expect(item.corroborated).toBe(true);
+      expect(item.acknowledged).toBe(false);
       expect(item.memberReports.map((member) => member.id)).toEqual([CLUSTER_A, 'r-2']);
     });
 
@@ -153,6 +179,7 @@ describe('GET /clusters/operational', () => {
       expect(item.operationalId).toBe('solo-1');
       expect(item.clusterId).toBeNull();
       expect(item.reportCount).toBe(1);
+      expect(item.corroborated).toBe(false);
       expect(item.memberReports).toHaveLength(1);
       expect(item.location).toBe('Main Street');
     });
@@ -172,11 +199,12 @@ describe('GET /clusters/operational', () => {
 
     test('a resolved operational incident remains listable', async () => {
       const response = await list([
-        report({ id: CLUSTER_A, cluster_id: CLUSTER_A, status: 'resolved' }),
-        report({ id: 'r-2', cluster_id: CLUSTER_A, status: 'resolved' })
+        report({ id: CLUSTER_A, cluster_id: CLUSTER_A, status: 'resolved', reported_by: 'citizen-1' }),
+        report({ id: 'r-2', cluster_id: CLUSTER_A, status: 'resolved', reported_by: 'citizen-2' })
       ]);
       expect(response.body.data).toHaveLength(1);
       expect(response.body.data[0].status).toBe('resolved');
+      expect(response.body.data[0].corroborated).toBe(true);
     });
   });
 
@@ -188,12 +216,28 @@ describe('GET /clusters/operational', () => {
       ]);
       expect(same.body.data[0].reportCount).toBe(2);
       expect(same.body.data[0].distinctReporterCount).toBe(1);
+      expect(same.body.data[0].corroborated).toBe(false);
 
       const different = await list([
         report({ id: CLUSTER_A, cluster_id: CLUSTER_A, reported_by: 'citizen-1' }),
         report({ id: 'r-2', cluster_id: CLUSTER_A, reported_by: 'citizen-2' })
       ]);
       expect(different.body.data[0].distinctReporterCount).toBe(2);
+      expect(different.body.data[0].corroborated).toBe(true);
+    });
+
+    test('priority alone and repeated reports from one reporter are not corroborated', async () => {
+      const high = await list([report({ id: CLUSTER_A, cluster_id: CLUSTER_A, priority: 'high' })]);
+      expect(high.body.data[0]).toMatchObject({ reportCount: 1, priority: 'high', corroborated: false });
+
+      const threeSame = await list([
+        report({ id: CLUSTER_A, cluster_id: CLUSTER_A, reported_by: 'citizen-1' }),
+        report({ id: 'r-2', cluster_id: CLUSTER_A, reported_by: 'citizen-1' }),
+        report({ id: 'r-3', cluster_id: CLUSTER_A, reported_by: 'citizen-1' })
+      ]);
+      expect(threeSame.body.data[0]).toMatchObject({
+        reportCount: 3, distinctReporterCount: 1, corroborated: false
+      });
     });
 
     test('null and empty reporter ids are excluded from the distinct count', async () => {
@@ -332,6 +376,7 @@ describe('GET /clusters/operational', () => {
       const [item] = response.body.data;
       expect(item.reportCount).toBe(1);
       expect(item.distinctReporterCount).toBe(1);
+      expect(item.corroborated).toBe(false);
       expect(item.priority).toBe('low');
       expect(item.status).toBe('pending');
       expect(item.location).toBe('Own Street');
@@ -366,9 +411,9 @@ describe('GET /clusters/operational', () => {
     test('items expose only the operational contract keys', async () => {
       const response = await list([sensitive()]);
       expect(Object.keys(response.body.data[0]).sort()).toEqual([
-        'assignedTeams', 'clusterId', 'coordinates', 'distinctReporterCount', 'firstReportedAt',
-        'latestReportedAt', 'latitude', 'location', 'longitude', 'memberReports', 'operationalId',
-        'priority', 'reportCount', 'status', 'type'
+        'acknowledged', 'assignedTeams', 'clusterId', 'coordinates', 'corroborated',
+        'distinctReporterCount', 'firstReportedAt', 'latestReportedAt', 'latitude', 'location',
+        'longitude', 'memberReports', 'operationalId', 'priority', 'reportCount', 'status', 'type'
       ]);
     });
 
@@ -396,5 +441,86 @@ describe('GET /clusters/operational', () => {
       expect(selection).not.toMatch(/users|reporter|\*|evidence|storage/);
       expect(queries).toEqual(['emergency_reports']);
     });
+  });
+});
+
+describe('POST /clusters/operational/:operationalId/acknowledge', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUser = null;
+  });
+
+  const acknowledge = async (rows, user, body) => {
+    mockUser = user;
+    mockReports(rows);
+    return request(app())
+      .post(`/clusters/operational/${CLUSTER_A}/acknowledge`)
+      .send(body || {});
+  };
+
+  const corroboratedReports = [
+    report({ id: CLUSTER_A, cluster_id: CLUSTER_A, reported_by: 'citizen-1' }),
+    report({ id: 'r-2', cluster_id: CLUSTER_A, reported_by: 'citizen-2' })
+  ];
+
+  test('an organization admin can acknowledge an active corroborated incident without trusting client organization data', async () => {
+    const response = await acknowledge(corroboratedReports, {
+      id: 'admin-1', role: 'admin', organization_id: ORG
+    }, { organization_id: OTHER_ORG });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual({
+      operationalId: CLUSTER_A,
+      acknowledged: true
+    });
+    expect(reportQuery.eq).toHaveBeenCalledWith('organization_id', ORG);
+    expect(acknowledgementQuery.insert).toHaveBeenCalledWith({
+      organization_id: ORG,
+      operational_id: CLUSTER_A,
+      acknowledged_by: 'admin-1'
+    });
+    expect(reportQuery).not.toHaveProperty('update');
+    expect(reportQuery).not.toHaveProperty('insert');
+  });
+
+  test('responders cannot acknowledge', async () => {
+    const response = await acknowledge(corroboratedReports, {
+      id: 'responder-1', role: 'responder', organization_id: ORG
+    });
+    expect(response.status).toBe(403);
+    expect(getClient).not.toHaveBeenCalled();
+  });
+
+  test('cross-organization admins cannot acknowledge another organization incident', async () => {
+    const response = await acknowledge(corroboratedReports, {
+      id: 'admin-2', role: 'admin', organization_id: OTHER_ORG
+    });
+    expect(response.status).toBe(404);
+    expect(acknowledgementQuery.insert).not.toHaveBeenCalled();
+  });
+
+  test('repeated acknowledgement is idempotent and preserves the first audit record', async () => {
+    const user = { id: 'admin-1', role: 'admin', organization_id: ORG };
+    const first = await acknowledge(corroboratedReports, user);
+    const second = await request(app())
+      .post(`/clusters/operational/${CLUSTER_A}/acknowledge`)
+      .send({});
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(acknowledgementQuery.insert).toHaveBeenCalledTimes(1);
+    expect(second.body.data.acknowledged).toBe(first.body.data.acknowledged);
+  });
+
+  test('non-corroborated and resolved incidents cannot be acknowledged', async () => {
+    const single = await acknowledge([report({ id: CLUSTER_A, cluster_id: CLUSTER_A })], {
+      id: 'admin-1', role: 'admin', organization_id: ORG
+    });
+    expect(single.status).toBe(409);
+
+    const resolved = await acknowledge(corroboratedReports.map(item => ({ ...item, status: 'resolved' })), {
+      id: 'admin-1', role: 'admin', organization_id: ORG
+    });
+    expect(resolved.status).toBe(409);
   });
 });

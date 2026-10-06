@@ -33,6 +33,8 @@ export interface OperationalCluster {
   latestReportedAt: string | null;
   reportCount: number;
   distinctReporterCount: number;
+  corroborated: boolean;
+  acknowledged: boolean;
   priority: OperationalPriority | null;
   assignedTeams: { id: string }[];
   memberReports: OperationalMemberReport[];

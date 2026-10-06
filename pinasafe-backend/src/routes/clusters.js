@@ -46,6 +46,38 @@ router.get('/operational', authenticateToken, requireRole(['admin', 'responder']
   }
 });
 
+router.post('/operational/:operationalId/acknowledge', authenticateToken, requireRole(['admin']), validateUUID('operationalId'), async (req, res) => {
+  try {
+    const { user } = req;
+
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
+
+    const result = await clusteringService.acknowledgeOperationalIncident(
+      user.organization_id,
+      req.params.operationalId,
+      user.id
+    );
+    if (result.status === 'not_found') {
+      return res.status(404).json({ error: 'Operational incident not found' });
+    }
+    if (result.status === 'not_acknowledgeable') {
+      return res.status(409).json({ error: 'Operational incident is not an active corroborated alert' });
+    }
+
+    return res.json({
+      data: {
+        operationalId: req.params.operationalId,
+        acknowledged: true
+      }
+    });
+  } catch (error) {
+    safeLogger.error('clusters.operational_acknowledgement_failed');
+    return res.status(500).json({ error: 'Failed to acknowledge operational incident' });
+  }
+});
+
 router.get('/:clusterId/info', authenticateToken, validateUUID('clusterId'), async (req, res) => {
   try {
     const { clusterId } = req.params;

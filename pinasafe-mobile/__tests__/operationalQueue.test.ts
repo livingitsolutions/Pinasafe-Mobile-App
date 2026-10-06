@@ -17,7 +17,7 @@ jest.mock('react', () => ({
 }));
 jest.mock('react-native', () => ({
   Linking: { openURL: jest.fn().mockResolvedValue(undefined) },
-  Platform: { select: ({ web, default: fallback }: { web?: unknown; default?: unknown }) => web ?? fallback },
+  Platform: { OS: 'web', select: ({ web, default: fallback }: { web?: unknown; default?: unknown }) => web ?? fallback },
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles },
   Text: 'Text',
@@ -36,6 +36,7 @@ jest.mock('@/components/ui', () => ({
 
 const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
 const { Linking } = jest.requireMock('react-native') as { Linking: { openURL: jest.Mock } };
+const { Platform } = jest.requireMock('react-native') as { Platform: { OS: string } };
 const { apiService } = jest.requireMock('@/services/apiService') as {
   apiService: { getOperationalClusters: jest.Mock };
 };
@@ -60,14 +61,15 @@ const cluster = (overrides: Partial<OperationalCluster> = {}): OperationalCluste
   operationalId: 'c-1', clusterId: 'c-1', type: 'fire', status: 'dispatched', location: 'Main Street',
   latitude: 10, longitude: 124, coordinates: { latitude: 10, longitude: 124 },
   firstReportedAt: '2026-10-05T01:00:00.000Z', latestReportedAt: '2026-10-05T02:00:00.000Z',
-  reportCount: 2, distinctReporterCount: 1, priority: 'high', assignedTeams: [],
+  reportCount: 2, distinctReporterCount: 1, corroborated: false, acknowledged: false,
+  priority: 'high', assignedTeams: [],
   memberReports: [member(), member({ id: 'r-2', created_at: '2026-10-05T02:00:00.000Z' })], ...overrides,
 });
 
-// State order in AdminIncidents: filter, clusters, loading, error
+// State order in AdminIncidents: filter, clusters, loading, errors, acknowledgement, and sound state.
 const render = (clusters: OperationalCluster[], filter = 'all', error = '') => {
   mockHarness.slots.length = 0;
-  mockHarness.slots.push(filter, clusters, false, error);
+  mockHarness.slots.push(filter, clusters, false, error, new Set<string>(), {}, 'disabled', '');
   mockHarness.resetCursor();
   return AdminIncidents();
 };
@@ -157,14 +159,44 @@ describe('Admin operational incident queue', () => {
     expect(labels.some(label => /dispatch|resolve|responding/i.test(String(label)))).toBe(false);
   });
 
-  test('same-reporter two-report cluster has no corroboration or High Alert wording', () => {
-    const text = allText(render([cluster({ distinctReporterCount: 1 })])).toLowerCase();
-    for (const forbidden of ['high alert', 'corroborat', 'verified by multiple', 'multiple citizens']) expect(text).not.toContain(forbidden);
+  test('same-reporter two-report cluster has no corroborated alert badge or action', () => {
+    const tree = render([cluster({ distinctReporterCount: 1 })]);
+    const text = allText(tree).toLowerCase();
+    expect(text).not.toContain('corroborated');
+    expect(findAllByType(tree, 'Button').map(button => button.props.label)).not.toContain('Acknowledge Alert');
   });
 
-  test('even multiple distinct reporters do not trigger corroboration wording', () => {
-    const text = allText(render([cluster({ distinctReporterCount: 2 })])).toLowerCase();
-    for (const forbidden of ['high alert', 'corroborat', 'verified by multiple', 'multiple citizens']) expect(text).not.toContain(forbidden);
+  test('backend corroboration displays the high alert independently from priority', () => {
+    const tree = render([cluster({ distinctReporterCount: 2, corroborated: true })]);
+    const text = allText(tree);
+    expect(text).toContain('CORROBORATED HIGH ALERT');
+    expect(text).toContain('2 Reports');
+    expect(text).toContain('Priority ');
+    expect(text).toContain('HIGH');
+    expect(text).toContain('indicates urgency');
+    expect(findAllByType(tree, 'Button').map(button => button.props.label)).toContain('Acknowledge Alert');
+  });
+
+  test('acknowledged corroborated incident stays visible and resolved incident is not active high alert', () => {
+    const acknowledged = allText(render([cluster({ corroborated: true, acknowledged: true })]));
+    expect(acknowledged).toContain('CORROBORATED HIGH ALERT');
+    expect(acknowledged).toContain('Acknowledged');
+    expect(acknowledged).not.toContain('Acknowledge Alert');
+
+    const resolved = allText(render([cluster({ status: 'resolved', corroborated: true })]));
+    expect(resolved).toContain('CORROBORATED');
+    expect(resolved).not.toContain('CORROBORATED HIGH ALERT');
+  });
+
+  test('native platform keeps the visual alert and disables operational audio', () => {
+    Platform.OS = 'android';
+    const tree = render([cluster({ corroborated: true, distinctReporterCount: 2 })]);
+    expect(allText(tree)).toContain('CORROBORATED HIGH ALERT');
+    expect(allText(tree)).toContain('unavailable on this platform');
+    const audioButton = findAllByType(tree, 'Button')
+      .find(button => String(button.props.label).includes('unavailable on this platform'));
+    expect(audioButton?.props.disabled).toBe(true);
+    Platform.OS = 'web';
   });
 
   test('resolved incidents remain reachable through the resolved filter', () => {
@@ -227,14 +259,14 @@ describe('alert/audio and terminology freeze', () => {
     'utils/operationalCluster.ts',
   ];
 
-  test.each(operationalFiles)('%s does not couple to EmergencyContext or alert audio', file => {
+  test.each(operationalFiles)('%s does not couple to EmergencyContext or report-level clustering', file => {
     const source = read(file);
-    expect(source).not.toMatch(/EmergencyContext|useEmergency|alertAudio|AudioAlertService|clusteredIncidents/);
+    expect(source).not.toMatch(/EmergencyContext|useEmergency|clusteredIncidents/);
   });
 
-  test.each(operationalFiles)('%s contains no corroboration or High Alert terminology', file => {
-    const withoutComments = read(file).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-    expect(withoutComments.toLowerCase()).not.toMatch(/high alert|corroborat|verified by multiple/);
+  test('the Incidents command center labels corroboration separately from priority', () => {
+    expect(read('app/(tabs-admin)/incidents.tsx')).toMatch(/Priority indicates urgency; corroboration indicates independent confirmation/);
+    expect(read('utils/operationalHighAlert.ts')).toMatch(/CORROBORATED HIGH ALERT/);
   });
 
   test('the operational code never calls the legacy cluster info/updates endpoints', () => {

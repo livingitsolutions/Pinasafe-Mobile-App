@@ -522,6 +522,14 @@ class APIService {
     return this.request('/clusters/operational');
   }
 
+  async acknowledgeOperationalIncident(operationalId: string): Promise<APIResponse<{
+    data: { operationalId: string; acknowledged: true };
+  }>> {
+    return this.request(`/clusters/operational/${encodeURIComponent(operationalId)}/acknowledge`, {
+      method: 'POST',
+    });
+  }
+
   async getClusterInfo(clusterId: string): Promise<APIResponse<any>> {
     return this.request(`/clusters/${clusterId}/info`);
   }
