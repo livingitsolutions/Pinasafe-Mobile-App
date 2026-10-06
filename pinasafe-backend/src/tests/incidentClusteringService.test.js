@@ -30,21 +30,24 @@ const buildQuery = (result) => ({
   gte: jest.fn().mockReturnThis(),
   lte: jest.fn().mockReturnThis(),
   neq: jest.fn().mockReturnThis(),
+  in: jest.fn().mockReturnThis(),
   not: jest.fn().mockReturnThis(),
   order: jest.fn().mockReturnThis(),
   update: jest.fn().mockReturnThis(),
   insert: jest.fn().mockReturnThis(),
+  single: jest.fn().mockResolvedValue(result),
   then: (resolve, reject) => Promise.resolve(result).then(resolve, reject)
 });
 
-const configureClient = (queries) => {
+const configureClient = (queries, rpcResult = { data: { status: 'updated' }, error: null }) => {
   const from = jest.fn((table) => {
     const query = queries.shift();
     if (!query) throw new Error(`Unexpected query for ${table}`);
     return query;
   });
-  getClient.mockReturnValue({ from });
-  return from;
+  const rpc = jest.fn().mockResolvedValue(rpcResult);
+  getClient.mockReturnValue({ from, rpc });
+  return { from, rpc };
 };
 
 const clusterRead = async (reports) => {
@@ -53,25 +56,25 @@ const clusterRead = async (reports) => {
     buildQuery({ data: [], error: null }),
     buildQuery({ data: [], error: null })
   ]);
-  return clusteringService.getClusterInfo(CLUSTER_ID);
+  return clusteringService.getClusterInfo(CLUSTER_ID, { organizationId: 'organization-1' });
 };
 
 describe('incident clustering service', () => {
   beforeEach(() => jest.clearAllMocks());
 
   test('first report establishes its own cluster and subscriber', async () => {
-    const reportQuery = buildQuery({ error: null });
     const subscriberQuery = buildQuery({ error: null });
-    const from = configureClient([reportQuery, subscriberQuery]);
+    const { from, rpc } = configureClient([subscriberQuery]);
 
-    await expect(clusteringService.createCluster(REPORT_ID, 'reporter-1'))
+    await expect(clusteringService.createCluster(REPORT_ID, 'reporter-1', 'organization-1'))
       .resolves.toBe(REPORT_ID);
 
-    expect(from.mock.calls.map(([table]) => table)).toEqual([
-      'emergency_reports',
-      'incident_cluster_subscribers'
-    ]);
-    expect(reportQuery.update).toHaveBeenCalledWith({ cluster_id: REPORT_ID });
+    expect(from.mock.calls.map(([table]) => table)).toEqual(['incident_cluster_subscribers']);
+    expect(rpc).toHaveBeenCalledWith('set_emergency_report_cluster_atomic', {
+      p_report_id: REPORT_ID,
+      p_target_cluster_id: REPORT_ID,
+      p_organization_id: 'organization-1'
+    });
     expect(subscriberQuery.insert).toHaveBeenCalledWith({
       cluster_id: REPORT_ID,
       user_id: 'reporter-1',
@@ -90,7 +93,59 @@ describe('incident clustering service', () => {
     }))).resolves.toBe(CLUSTER_ID);
 
     expect(candidatesQuery.neq).toHaveBeenCalledWith('status', 'resolved');
+    expect(candidatesQuery.eq).toHaveBeenCalledWith('organization_id', 'organization-1');
     expect(candidatesQuery.order).not.toHaveBeenCalled();
+  });
+
+  test('matching-cluster candidates are restricted to the new report organization', async () => {
+    const candidatesQuery = buildQuery({
+      data: [incident({ organization_id: 'organization-2' })],
+      error: null
+    });
+    configureClient([candidatesQuery]);
+
+    await expect(clusteringService.findMatchingCluster(incident({
+      id: 'report-2',
+      organization_id: 'organization-1'
+    }))).resolves.toBeNull();
+
+    expect(candidatesQuery.eq).toHaveBeenCalledWith('organization_id', 'organization-1');
+  });
+
+  test('cluster notifications include only subscribers linked to same-organization reports', async () => {
+    const reportQuery = buildQuery({
+      data: [{ id: 'same-org-report' }],
+      error: null
+    });
+    const subscriberQuery = buildQuery({
+      data: [
+        { user_id: 'same-org-user', incident_id: 'same-org-report' },
+        { user_id: 'foreign-user', incident_id: 'foreign-report' }
+      ],
+      error: null
+    });
+    const updateQuery = buildQuery({
+      data: { id: 'update-1', cluster_id: CLUSTER_ID },
+      error: null
+    });
+    const { from } = configureClient([reportQuery, subscriberQuery, updateQuery]);
+
+    await expect(clusteringService.notifyClusterSubscribers(
+      CLUSTER_ID,
+      'Responders are en route',
+      'dispatched',
+      'responder-1',
+      'organization-1'
+    )).resolves.toMatchObject({
+      notifiedUsers: ['same-org-user']
+    });
+
+    expect(reportQuery.eq).toHaveBeenCalledWith('organization_id', 'organization-1');
+    expect(from.mock.calls.map(([table]) => table)).toEqual([
+      'emergency_reports',
+      'incident_cluster_subscribers',
+      'incident_updates'
+    ]);
   });
 
   test('resolved candidates cannot match and a new report can establish a new cluster', async () => {
@@ -98,9 +153,8 @@ describe('incident clustering service', () => {
       data: [incident({ status: 'resolved' })],
       error: null
     });
-    const newReportUpdate = buildQuery({ error: null });
     const subscriberInsert = buildQuery({ error: null });
-    configureClient([candidatesQuery, newReportUpdate, subscriberInsert]);
+    const { rpc } = configureClient([candidatesQuery, subscriberInsert]);
 
     const newReport = incident({
       id: 'report-after-resolution',
@@ -109,11 +163,49 @@ describe('incident clustering service', () => {
       longitude: 20
     });
     await expect(clusteringService.findMatchingCluster(newReport)).resolves.toBeNull();
-    await expect(clusteringService.createCluster(newReport.id, 'reporter-2'))
+    await expect(clusteringService.createCluster(newReport.id, 'reporter-2', 'organization-1'))
       .resolves.toBe(newReport.id);
 
     expect(candidatesQuery.neq).toHaveBeenCalledWith('status', 'resolved');
-    expect(newReportUpdate.update).toHaveBeenCalledWith({ cluster_id: newReport.id });
+    expect(rpc).toHaveBeenCalledWith('set_emergency_report_cluster_atomic', {
+      p_report_id: newReport.id,
+      p_target_cluster_id: newReport.id,
+      p_organization_id: 'organization-1'
+    });
+  });
+
+  test('joining a target cluster uses the atomic membership RPC before subscribing', async () => {
+    const subscriberInsert = buildQuery({ error: null });
+    const { from, rpc } = configureClient([subscriberInsert]);
+
+    await expect(clusteringService.addToCluster(
+      'cluster-target',
+      'report-2',
+      'reporter-2',
+      'organization-1'
+    )).resolves.toBe('cluster-target');
+
+    expect(rpc).toHaveBeenCalledWith('set_emergency_report_cluster_atomic', {
+      p_report_id: 'report-2',
+      p_target_cluster_id: 'cluster-target',
+      p_organization_id: 'organization-1'
+    });
+    expect(from.mock.calls.map(([table]) => table)).toEqual(['incident_cluster_subscribers']);
+  });
+
+  test('an assignment conflict rejects membership before any subscriber is added', async () => {
+    const { from } = configureClient([], {
+      data: { status: 'assignment_conflict' },
+      error: null
+    });
+
+    await expect(clusteringService.addToCluster(
+      'cluster-assigned',
+      'assigned-report',
+      'reporter-2',
+      'organization-1'
+    )).rejects.toMatchObject({ code: 'assignment_conflict' });
+    expect(from).not.toHaveBeenCalled();
   });
 
   test('an active member keeps a mixed-status cluster eligible for matching', async () => {
@@ -476,7 +568,9 @@ describe('incident clustering service', () => {
       buildQuery({ data: [], error: null })
     ]);
 
-    const result = await clusteringService.getClusterInfo(CLUSTER_ID);
+    const result = await clusteringService.getClusterInfo(CLUSTER_ID, {
+      organizationId: 'organization-1'
+    });
 
     expect(reportQuery.select.mock.calls[0][0]).toContain('*');
     expect(reportQuery.select.mock.calls[0][0])
@@ -502,5 +596,84 @@ describe('incident clustering service', () => {
     expect(result.memberReports[0]).not.toHaveProperty('assigned_team');
     expect(result.memberReports[0]).not.toHaveProperty('organization');
     expect(result).not.toHaveProperty('signedUrl');
+  });
+
+  test('cluster detail filters malformed cross-organization reports even if returned by the client', async () => {
+    const foreignIncident = incident({ id: 'foreign-report', organization_id: 'organization-2' });
+    const reportQuery = buildQuery({ data: [incident(), foreignIncident], error: null });
+    configureClient([
+      reportQuery,
+      buildQuery({ data: [], error: null }),
+      buildQuery({ data: [], error: null })
+    ]);
+
+    const result = await clusteringService.getClusterInfo(CLUSTER_ID, {
+      organizationId: 'organization-1'
+    });
+
+    expect(reportQuery.eq).toHaveBeenCalledWith('organization_id', 'organization-1');
+    expect(result.incidents.map(({ id }) => id)).toEqual([REPORT_ID]);
+    expect(result.totalReports).toBe(1);
+  });
+
+  test('cluster detail counts only scoped subscribers and updates authored in the same organization', async () => {
+    const reportQuery = buildQuery({ data: [incident()], error: null });
+    const subscriberQuery = buildQuery({
+      data: [
+        { user_id: 'same-org-user', incident_id: REPORT_ID },
+        { user_id: 'foreign-user', incident_id: 'foreign-report' }
+      ],
+      error: null
+    });
+    const updatesQuery = buildQuery({
+      data: [
+        {
+          id: 'same-org-update',
+          responder: { organization_id: 'organization-1' }
+        },
+        {
+          id: 'foreign-update',
+          responder: { organization_id: 'organization-2' }
+        }
+      ],
+      error: null
+    });
+    configureClient([reportQuery, subscriberQuery, updatesQuery]);
+
+    const result = await clusteringService.getClusterInfo(CLUSTER_ID, {
+      organizationId: 'organization-1'
+    });
+
+    expect(result.subscribers).toBe(1);
+    expect(result.updates.map(({ id }) => id)).toEqual(['same-org-update']);
+  });
+
+  test('my clusters excludes subscriptions linked to another users report or a different group', async () => {
+    const subscriptionsQuery = buildQuery({
+      data: [
+        {
+          cluster_id: 'cluster-1',
+          incident_id: 'owned-report',
+          incident: { id: 'owned-report', cluster_id: 'cluster-1', reported_by: 'citizen-1' }
+        },
+        {
+          cluster_id: 'cluster-2',
+          incident_id: 'foreign-report',
+          incident: { id: 'foreign-report', cluster_id: 'cluster-2', reported_by: 'citizen-2' }
+        },
+        {
+          cluster_id: 'cluster-3',
+          incident_id: 'owned-other-group-report',
+          incident: { id: 'owned-other-group-report', cluster_id: 'cluster-4', reported_by: 'citizen-1' }
+        }
+      ],
+      error: null
+    });
+    configureClient([subscriptionsQuery]);
+
+    await expect(clusteringService.getUserClusters('citizen-1')).resolves.toEqual([
+      expect.objectContaining({ cluster_id: 'cluster-1' })
+    ]);
+    expect(subscriptionsQuery.eq).toHaveBeenCalledWith('user_id', 'citizen-1');
   });
 });

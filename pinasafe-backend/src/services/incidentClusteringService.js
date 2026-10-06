@@ -5,6 +5,14 @@ const REPORT_STATUSES = new Set(['pending', 'dispatched', 'responding', 'resolve
 const STATUS_ORDER = { pending: 0, dispatched: 1, responding: 2 };
 const PRIORITY_ORDER = { low: 0, medium: 1, high: 2, critical: 3 };
 
+class OperationalClusterMembershipError extends Error {
+  constructor(code) {
+    super('Operational cluster membership was not changed');
+    this.name = 'OperationalClusterMembershipError';
+    this.code = code;
+  }
+}
+
 class IncidentClusteringService {
   constructor() {
     this.CLUSTER_RADIUS_METERS = 500;
@@ -85,6 +93,9 @@ class IncidentClusteringService {
   }
 
   async findMatchingCluster(newIncident) {
+    if (!newIncident.organization_id) {
+      throw new Error('Organization scope is required to find a matching cluster');
+    }
     const supabase = getClient();
 
     const todayStart = new Date();
@@ -99,6 +110,7 @@ class IncidentClusteringService {
       .eq('type', newIncident.type)
       .gte('created_at', todayStart.toISOString())
       .lte('created_at', todayEnd.toISOString())
+      .eq('organization_id', newIncident.organization_id)
       .neq('id', newIncident.id)
       .neq('status', 'resolved')
       .not('cluster_id', 'is', null);
@@ -112,7 +124,9 @@ class IncidentClusteringService {
       return null;
     }
 
-    for (const incident of existingIncidents.filter((item) => item.status !== 'resolved')) {
+    for (const incident of existingIncidents.filter((item) =>
+      item.organization_id === newIncident.organization_id && item.status !== 'resolved'
+    )) {
       if (this.shouldCluster(newIncident, incident)) {
         return incident.cluster_id;
       }
@@ -121,18 +135,33 @@ class IncidentClusteringService {
     return null;
   }
 
-  async createCluster(primaryIncidentId, userId) {
-    const supabase = getClient();
+  async updateClusterMembership(incidentId, clusterId, organizationId) {
+    const { data, error } = await getClient().rpc(
+      'set_emergency_report_cluster_atomic',
+      {
+        p_report_id: incidentId,
+        p_target_cluster_id: clusterId,
+        p_organization_id: organizationId
+      }
+    );
 
-    const { error: updateError } = await supabase
-      .from('emergency_reports')
-      .update({ cluster_id: primaryIncidentId })
-      .eq('id', primaryIncidentId);
-
-    if (updateError) {
-      safeLogger.error('clustering.cluster_create_failed');
-      throw updateError;
+    if (error) {
+      safeLogger.error('clustering.cluster_membership_update_failed');
+      throw error;
     }
+
+    if (data?.status === 'assignment_conflict' || data?.status === 'group_changed') {
+      throw new OperationalClusterMembershipError(data.status);
+    }
+    if (!['updated', 'unchanged'].includes(data?.status)) {
+      safeLogger.error('clustering.cluster_membership_update_failed');
+      throw new OperationalClusterMembershipError(data?.status || 'unknown');
+    }
+  }
+
+  async createCluster(primaryIncidentId, userId, organizationId) {
+    await this.updateClusterMembership(primaryIncidentId, primaryIncidentId, organizationId);
+    const supabase = getClient();
 
     const { error: subscriberError } = await supabase
       .from('incident_cluster_subscribers')
@@ -150,18 +179,9 @@ class IncidentClusteringService {
     return primaryIncidentId;
   }
 
-  async addToCluster(clusterId, incidentId, userId) {
+  async addToCluster(clusterId, incidentId, userId, organizationId) {
+    await this.updateClusterMembership(incidentId, clusterId, organizationId);
     const supabase = getClient();
-
-    const { error: updateError } = await supabase
-      .from('emergency_reports')
-      .update({ cluster_id: clusterId })
-      .eq('id', incidentId);
-
-    if (updateError) {
-      safeLogger.error('clustering.cluster_add_failed');
-      throw updateError;
-    }
 
     const { error: subscriberError } = await supabase
       .from('incident_cluster_subscribers')
@@ -179,18 +199,44 @@ class IncidentClusteringService {
     return clusterId;
   }
 
-  async notifyClusterSubscribers(clusterId, message, status, responderId) {
+  async notifyClusterSubscribers(clusterId, message, status, responderId, organizationId) {
+    if (!organizationId) {
+      throw new Error('Organization scope is required to notify cluster subscribers');
+    }
     const supabase = getClient();
+
+    const { data: incidents, error: incidentsError } = await supabase
+      .from('emergency_reports')
+      .select('id')
+      .eq('cluster_id', clusterId)
+      .eq('organization_id', organizationId);
+
+    if (incidentsError) {
+      safeLogger.error('clustering.incidents_fetch_failed');
+      throw incidentsError;
+    }
+
+    const incidentIds = (incidents || []).map((incident) => incident.id);
+    if (incidentIds.length === 0) {
+      throw new Error('No organization-scoped reports found for cluster update');
+    }
 
     const { data: subscribers, error: subError } = await supabase
       .from('incident_cluster_subscribers')
-      .select('user_id')
+      .select('user_id, incident_id')
       .eq('cluster_id', clusterId);
 
     if (subError) {
       safeLogger.error('clustering.subscribers_fetch_failed');
       throw subError;
     }
+
+    const incidentIdSet = new Set(incidentIds);
+    const notifiedUsers = [...new Set(
+      (subscribers || [])
+        .filter((subscriber) => incidentIdSet.has(subscriber.incident_id))
+        .map((subscriber) => subscriber.user_id)
+    )];
 
     const { data: update, error: updateError } = await supabase
       .from('incident_updates')
@@ -210,18 +256,50 @@ class IncidentClusteringService {
 
     return {
       update,
-      notifiedUsers: subscribers.map(s => s.user_id)
+      notifiedUsers
     };
   }
 
-  async getClusterUpdates(clusterId) {
+  async getScopedClusterIncidents(clusterId, scope) {
     const supabase = getClient();
+    let query = supabase
+      .from('emergency_reports')
+      .select(`
+        *,
+        reporter:users!reported_by(name, phone)
+      `)
+      .eq('cluster_id', clusterId);
+
+    if (scope?.organizationId) {
+      query = query.eq('organization_id', scope.organizationId);
+    } else if (scope?.userId) {
+      query = query.eq('reported_by', scope.userId);
+    } else {
+      throw new Error('A cluster access scope is required');
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      safeLogger.error('clustering.incidents_fetch_failed');
+      throw error;
+    }
+    return (data || []).filter((incident) => (
+      scope?.organizationId
+        ? incident.organization_id === scope.organizationId
+        : incident.reported_by === scope.userId
+    ));
+  }
+
+  async getScopedClusterUpdates(clusterId, organizationIds) {
+    const supabase = getClient();
+    const allowedOrganizationIds = new Set(organizationIds.filter(Boolean));
+    if (allowedOrganizationIds.size === 0) return [];
 
     const { data: updates, error } = await supabase
       .from('incident_updates')
       .select(`
         *,
-        responder:users!responder_id(name, role)
+        responder:users!responder_id(name, role, organization_id)
       `)
       .eq('cluster_id', clusterId)
       .order('created_at', { ascending: false });
@@ -231,7 +309,17 @@ class IncidentClusteringService {
       throw error;
     }
 
-    return updates;
+    return (updates || []).filter((update) =>
+      allowedOrganizationIds.has(update.responder?.organization_id)
+    );
+  }
+
+  async getClusterUpdates(clusterId, scope) {
+    const incidents = await this.getScopedClusterIncidents(clusterId, scope);
+    const organizationIds = scope?.organizationId
+      ? [scope.organizationId]
+      : incidents.map((incident) => incident.organization_id);
+    return this.getScopedClusterUpdates(clusterId, organizationIds);
   }
 
   async getUserClusters(userId) {
@@ -252,7 +340,10 @@ class IncidentClusteringService {
       throw error;
     }
 
-    return subscriptions;
+    return (subscriptions || []).filter((subscription) =>
+      subscription.incident?.reported_by === userId
+      && subscription.incident?.cluster_id === subscription.cluster_id
+    );
   }
 
   summarizeOperationalMembers(clusterId, incidents) {
@@ -437,25 +528,14 @@ class IncidentClusteringService {
     return { status: 'acknowledged' };
   }
 
-  async getClusterInfo(clusterId) {
+  async getClusterInfo(clusterId, scope) {
     const supabase = getClient();
-
-    const { data: incidents, error: incidentsError } = await supabase
-      .from('emergency_reports')
-      .select(`
-        *,
-        reporter:users!reported_by(name, phone)
-      `)
-      .eq('cluster_id', clusterId);
-
-    if (incidentsError) {
-      safeLogger.error('clustering.incidents_fetch_failed');
-      throw incidentsError;
-    }
+    const incidents = await this.getScopedClusterIncidents(clusterId, scope);
+    const incidentIds = new Set(incidents.map((incident) => incident.id));
 
     const { data: subscribers, error: subscribersError } = await supabase
       .from('incident_cluster_subscribers')
-      .select('user_id')
+      .select('user_id, incident_id')
       .eq('cluster_id', clusterId);
 
     if (subscribersError) {
@@ -463,26 +543,21 @@ class IncidentClusteringService {
       throw subscribersError;
     }
 
-    const { data: updates, error: updatesError } = await supabase
-      .from('incident_updates')
-      .select('*')
-      .eq('cluster_id', clusterId)
-      .order('created_at', { ascending: false });
-
-    if (updatesError) {
-      safeLogger.error('clustering.updates_fetch_failed');
-      throw updatesError;
-    }
-
-    const legacyIncidents = incidents || [];
+    const organizationIds = scope?.organizationId
+      ? [scope.organizationId]
+      : incidents.map((incident) => incident.organization_id);
+    const updates = await this.getScopedClusterUpdates(clusterId, organizationIds);
+    const legacyIncidents = incidents;
     const summary = this.summarizeOperationalMembers(clusterId, legacyIncidents);
 
     return {
       ...summary,
       incidents: legacyIncidents,
       totalReports: summary.reportCount,
-      subscribers: subscribers.length,
-      updates: updates || []
+      subscribers: (subscribers || []).filter((subscriber) =>
+        incidentIds.has(subscriber.incident_id)
+      ).length,
+      updates
     };
   }
 }

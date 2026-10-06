@@ -282,6 +282,101 @@ describe('operational detail behavior under concurrent requests', () => {
     mockHarness.unmount();
   });
 
+  test('authoritative operational assignment suppresses sibling dispatch without hiding report truth', async () => {
+    const assigned = member('assigned-member', {
+      assigned_team_id: 'internal-team-id',
+      status: 'dispatched',
+      description: 'Assigned report description',
+    });
+    const pending = member('pending-member', {
+      description: 'Still-pending report description',
+      status: 'pending',
+    });
+    const assignedCluster = {
+      ...cluster('cluster-id', [assigned, pending], 'dispatched'),
+      assignedTeams: [{ id: 'internal-team-id' }],
+    };
+    apiService.getOperationalClusters.mockResolvedValueOnce(clusterResponse(assignedCluster));
+    apiService.getReportEvidence.mockImplementation(async (id: string) => ({
+      data: { data: id === 'pending-member' ? [evidenceItem('pending-evidence')] : [] },
+    }));
+
+    renderOperational(report('pending-member'));
+    mockHarness.flushEffects();
+    await settlePromises();
+
+    const elements = renderOperational(report('pending-member'));
+    const content = collectText(elements).join(' | ');
+    const pendingCard = findAllByType(elements, 'Card').find(card => (
+      collectText(card).join(' ').includes('Still-pending report description')
+    ));
+    expect(content).toContain('Response team assigned');
+    expect(content).toContain('Still-pending report description');
+    expect(content).toContain('Assigned report description');
+    expect(content).not.toContain('internal-team-id');
+    expect(findAllByType(pendingCard, 'StatusBadge').some(badge => badge.props.value === 'pending')).toBe(true);
+    expect(findAllByType(pendingCard, 'Button').some(button => button.props.label === 'Dispatch this report')).toBe(false);
+    expect(findAllByType(pendingCard, 'Image').map(image => (image.props.source as { uri: string }).uri))
+      .toContain('https://signed.example/pending-evidence');
+    mockHarness.unmount();
+  });
+
+  test('assignment conflict shows a safe message and refreshes authoritative state', async () => {
+    const pending = member('pending-member', { description: 'Pending sibling remains visible' });
+    const assigned = member('assigned-member', {
+      assigned_team_id: 'private-team-id',
+      description: 'Assigned report remains visible',
+      status: 'dispatched',
+    });
+    const before = cluster('cluster-id', [pending, assigned]);
+    const after = {
+      ...cluster('cluster-id', [pending, assigned], 'dispatched'),
+      assignedTeams: [{ id: 'private-team-id' }],
+    };
+    apiService.getOperationalClusters
+      .mockResolvedValueOnce(clusterResponse(before))
+      .mockResolvedValueOnce(clusterResponse(after));
+    apiService.getReportEvidence.mockResolvedValue({ data: { data: [] } });
+    apiService.assignTeamToReport.mockRejectedValue(Object.assign(
+      new Error('A response team is already assigned to this operational incident'),
+      { status: 409 },
+    ));
+    teamService.getTeams.mockResolvedValue([{ id: 'team-1', name: 'Team One', members: [] }]);
+
+    renderOperational(report('pending-member'));
+    mockHarness.flushEffects();
+    await settlePromises();
+    let elements = renderOperational(report('pending-member'));
+    const pendingCard = findAllByType(elements, 'Card').find(card => (
+      collectText(card).join(' ').includes('Pending sibling remains visible')
+    ));
+    const dispatchButton = pendingCard && findAllByType(pendingCard, 'Button')
+      .find(button => button.props.label === 'Dispatch this report');
+    expect(dispatchButton).toBeDefined();
+    (dispatchButton?.props.onPress as () => void)();
+    await settlePromises();
+
+    elements = renderOperational(report('pending-member'));
+    const teamChoice = findAllByType(elements, 'Pressable').find(element => (
+      collectText(element.props.children).join(' ').includes('Team One')
+    ));
+    (teamChoice?.props.onPress as () => void)();
+    elements = renderOperational(report('pending-member'));
+    const confirm = findAllByType(elements, 'Button').find(button => button.props.label === 'Dispatch team');
+    await (confirm?.props.onPress as () => Promise<void>)();
+    await settlePromises();
+
+    elements = renderOperational(report('pending-member'));
+    const content = collectText(elements).join(' | ');
+    expect(apiService.getOperationalClusters).toHaveBeenCalledTimes(2);
+    expect(content).toContain('Response team assigned');
+    expect(content).toContain('already assigned to this operational incident');
+    expect(content).toContain('Pending sibling remains visible');
+    expect(findAllByType(elements, 'Button').some(button => button.props.label === 'Dispatch this report')).toBe(false);
+    expect(content).not.toContain('private-team-id');
+    mockHarness.unmount();
+  });
+
   test.each(['success', 'failure'] as const)(
     'an A dispatch %s after route changes cannot refresh or show stale state over B',
     async outcome => {

@@ -267,21 +267,33 @@ router.post('/', authenticateToken, validateEmergencyReport, async (req, res) =>
         const existingClusterId = await clusteringService.findMatchingCluster(report);
 
         if (existingClusterId) {
-          await clusteringService.addToCluster(existingClusterId, report.id, req.user.id);
+          await clusteringService.addToCluster(
+            existingClusterId,
+            report.id,
+            req.user.id,
+            report.organization_id
+          );
           report.cluster_id = existingClusterId;
 
           await clusteringService.notifyClusterSubscribers(
             existingClusterId,
             `New ${type} incident reported in ${location}`,
             'pending',
-            req.user.id
+            req.user.id,
+            report.organization_id
           );
         } else {
-          const clusterId = await clusteringService.createCluster(report.id, req.user.id);
+          const clusterId = await clusteringService.createCluster(
+            report.id,
+            req.user.id,
+            report.organization_id
+          );
           report.cluster_id = clusterId;
         }
       } catch (clusterError) {
-        safeLogger.error('emergency.report_clustering_failed');
+        safeLogger.error(clusterError.code === 'assignment_conflict'
+          ? 'emergency.report_clustering_assignment_conflict'
+          : 'emergency.report_clustering_failed');
       }
     }
 
@@ -403,7 +415,8 @@ router.put('/:id', authenticateToken, requireRole(['responder']), validateUUID('
           updatedReport.cluster_id,
           notes || `Incident status updated to ${status}`,
           status,
-          req.user.id
+          req.user.id,
+          updatedReport.organization_id
         );
       } catch (notifyError) {
         safeLogger.error('emergency.cluster_notification_failed');
@@ -454,7 +467,7 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin']), valid
     // Verify the team exists, is active, and belongs to the admin's organization
     const { data: team, error: teamError } = await supabase
       .from('rescue_teams')
-      .select('id')
+      .select('id, name, team_leader:users!team_leader_id(id, name)')
       .eq('id', teamId)
       .eq('organization_id', user.organization_id)
       .eq('is_active', true)
@@ -477,31 +490,50 @@ router.post('/:id/assign-team', authenticateToken, requireRole(['admin']), valid
       return res.status(409).json({ error: 'Team has no active rescue members available for dispatch' });
     }
 
-    const { data: updatedReport, error } = await supabase
-      .from('emergency_reports')
-      .update({
-        assigned_team_id: teamId,
-        assigned_by: user.id,
-        assigned_at: new Date().toISOString(),
-        status: 'dispatched',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .eq('organization_id', user.organization_id)
-      .eq('status', 'pending')
-      .select(`
-        *,
-        reporter:users!reported_by(name, phone),
-        responder:users!responder_id(name),
-        assigned_team:rescue_teams(id, name, team_leader:users!team_leader_id(id, name))
-      `)
-      .maybeSingle();
+    const { data: assignment, error } = await supabase.rpc(
+      'assign_emergency_report_team_atomic',
+      {
+        p_report_id: id,
+        p_team_id: teamId,
+        p_organization_id: user.organization_id,
+        p_assigned_by: user.id
+      }
+    );
 
-    if (error || !updatedReport) {
+    if (error || !assignment || typeof assignment.status !== 'string') {
       safeLogger.error('emergency.team_assignment_failed');
-      return res.status(409).json({ error: 'Emergency report is no longer pending assignment' });
+      return res.status(500).json({ error: 'Failed to assign team' });
     }
 
+    if (assignment.status === 'operational_assignment_exists') {
+      return res.status(409).json({
+        error: 'A response team is already assigned to this operational incident'
+      });
+    }
+    if (assignment.status === 'report_not_pending') {
+      return res.status(409).json({ error: 'Emergency report is no longer pending assignment' });
+    }
+    if (assignment.status === 'team_unavailable') {
+      return res.status(404).json({ error: 'Team not found or not in your organization' });
+    }
+    if (assignment.status === 'team_not_ready') {
+      return res.status(409).json({ error: 'Team has no active rescue members available for dispatch' });
+    }
+    if (assignment.status === 'organization_mismatch') {
+      return res.status(403).json({ error: 'Access denied for this organization' });
+    }
+    if (assignment.status === 'not_found') {
+      return res.status(404).json({ error: 'Emergency report not found' });
+    }
+    if (assignment.status !== 'assigned' || !assignment.report) {
+      safeLogger.error('emergency.team_assignment_failed');
+      return res.status(500).json({ error: 'Failed to assign team' });
+    }
+
+    const updatedReport = {
+      ...assignment.report,
+      assigned_team: team
+    };
     res.json({
       message: 'Team assigned successfully',
       data: formatEmergencyReport(updatedReport)
