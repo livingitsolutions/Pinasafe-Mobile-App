@@ -4,6 +4,7 @@ import IncidentDetail, { getEmergencyReportMapUrl } from '../app/incident/[id]';
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
   useState: jest.fn(),
+  useRef: jest.fn(() => ({ current: false })),
   useCallback: (callback: unknown) => callback,
   useEffect: jest.fn(),
   useMemo: (callback: () => unknown) => callback(),

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isClientRuntime } from '@/utils/clientRuntime';
 import { Platform } from 'react-native';
 import { CaptureLocation, EvidenceRole, isValidCaptureLocation } from '@/utils/evidenceFlow';
+import type { OperationalCluster } from '@/types/operationalCluster';
 
 interface APIResponse<T = unknown> {
   data?: T;
@@ -515,6 +516,10 @@ class APIService {
   // Cluster methods
   async getMyClusters(): Promise<APIResponse<any[]>> {
     return this.request('/clusters/my-clusters');
+  }
+
+  async getOperationalClusters(): Promise<APIResponse<{ data: OperationalCluster[] }>> {
+    return this.request('/clusters/operational');
   }
 
   async getClusterInfo(clusterId: string): Promise<APIResponse<any>> {

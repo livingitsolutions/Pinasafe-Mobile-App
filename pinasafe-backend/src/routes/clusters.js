@@ -30,6 +30,22 @@ router.get('/my-clusters', authenticateToken, async (req, res) => {
   }
 });
 
+router.get('/operational', authenticateToken, requireRole(['admin', 'responder']), async (req, res) => {
+  try {
+    const { user } = req;
+
+    if (!user.organization_id) {
+      return res.status(400).json({ error: 'User not assigned to an organization' });
+    }
+
+    const operationalClusters = await clusteringService.getOperationalClusters(user.organization_id);
+    res.json({ data: operationalClusters });
+  } catch (error) {
+    safeLogger.error('clusters.operational_list_failed');
+    res.status(500).json({ error: 'Failed to fetch operational incidents' });
+  }
+});
+
 router.get('/:clusterId/info', authenticateToken, validateUUID('clusterId'), async (req, res) => {
   try {
     const { clusterId } = req.params;
