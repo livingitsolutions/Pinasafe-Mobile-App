@@ -123,8 +123,8 @@ const validateEmergencyReport = [
     .withMessage('Invalid emergency type'),
   body('description')
     .trim()
-    .isLength({ min: 10, max: 1000 })
-    .withMessage('Description must be between 10 and 1000 characters'),
+    .isLength({ max: 1000 })
+    .withMessage('Description must not exceed 1000 characters'),
   body('location')
     .trim()
     .isLength({ min: 5, max: 500 })

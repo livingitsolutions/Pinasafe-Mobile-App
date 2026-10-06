@@ -28,6 +28,7 @@ const { createEmergencyReportWithEvidence } = require('../services/emergencyRepo
 const emergencyRouter = require('../routes/emergency');
 const locationTrackingRouter = require('../routes/location-tracking');
 const {
+  validateEmergencyReport,
   validateEmergencyStatusUpdate,
   validateLocationTracking,
   validateProfileUpdate,
@@ -69,6 +70,43 @@ describe('A.5.5I input and range validation', () => {
       reportId: validUUID,
       outcome: 'CREATED'
     });
+  });
+
+  test.each([
+    ['', ''],
+    ['   ', '']
+  ])('accepts optional emergency description %j and trims it to %j', async (description, expected) => {
+    const response = await request(buildValidationApp(validateEmergencyReport))
+      .post('/input')
+      .send({
+        type: 'road',
+        description,
+        location: 'A valid location',
+        priority: 'high'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.description).toBe(expected);
+  });
+
+  test('rejects emergency descriptions over 1000 characters', async () => {
+    const response = await expectRejected(validateEmergencyReport, {
+      type: 'road',
+      description: 'x'.repeat(1001),
+      location: 'A valid location',
+      priority: 'high'
+    });
+
+    expect(response.body.error).toBe('Validation failed');
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          msg: 'Description must not exceed 1000 characters',
+          path: 'description',
+          location: 'body'
+        })
+      ])
+    );
   });
 
   test('accepts zero latitude and longitude and preserves them through emergency persistence', async () => {
