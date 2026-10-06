@@ -192,22 +192,22 @@ describe('Authorization boundary checks', () => {
     expect(response.status).toBe(403);
   });
 
-  test('denies responder access to team tracking outside the organization', async () => {
-    const teamQuery = buildQuery({ data: { id: '123e4567-e89b-12d3-a456-426614174011', organization_id: 'org-2' }, error: null });
-    const mockSupabase = { from: jest.fn(() => teamQuery) };
+  test('denies citizens, including report owners, any responder location read', async () => {
+    const mockSupabase = { from: jest.fn() };
     getClient.mockReturnValue(mockSupabase);
 
     const app = express();
     app.use(express.json());
     app.use((req, res, next) => {
-      req.user = { id: 'responder-1', role: 'responder', organization_id: 'org-1' };
+      req.user = { id: 'citizen-1', role: 'citizen', organization_id: null };
       next();
     });
     app.use('/location-tracking', locationTrackingRouter);
 
-    const response = await request(app).get('/location-tracking/team/123e4567-e89b-12d3-a456-426614174011');
+    const response = await request(app).get('/location-tracking/reports/123e4567-e89b-12d3-a456-426614174011/location');
 
     expect(response.status).toBe(403);
+    expect(mockSupabase.from).not.toHaveBeenCalled();
   });
 
   test('denies responder access to a cluster with no organization report', async () => {

@@ -146,17 +146,17 @@ describe('mutation integrity predicates and field allowlists', () => {
     expect(updateQuery.update.mock.calls[0][0]).not.toHaveProperty('created_by');
   });
 
-  test('location update constrains the tracking write by its authorized relationships', async () => {
-    const reportQuery = buildQuery({ data: { id: 'report-1', organization_id: 'org-1' }, error: null });
-    const trackingQuery = buildQuery({ data: { id: 'track-1', team_id: 'team-1', emergency_report_id: 'report-1' }, error: null });
-    const teamQuery = buildQuery({ data: { id: 'team-1', organization_id: 'org-1' }, error: null });
-    const updateQuery = buildQuery({ data: { id: 'track-1' }, error: null });
+  test('location publish derives every ownership field on the server', async () => {
+    const reportQuery = buildQuery({ data: { id: '123e4567-e89b-12d3-a456-426614174003', organization_id: 'org-1', assigned_team_id: 'team-1', status: 'responding', cluster_id: null }, error: null });
+    const teamQuery = buildQuery({ data: { id: 'team-1', organization_id: 'org-1', team_leader_id: 'responder-1', is_active: true }, error: null });
+    const existingQuery = buildQuery({ data: null, error: null });
+    const insertQuery = buildQuery({ data: { captured_at: 'c', received_at: 'r' }, error: null });
     getClient.mockReturnValue({
       from: jest.fn()
         .mockReturnValueOnce(reportQuery)
-        .mockReturnValueOnce(trackingQuery)
         .mockReturnValueOnce(teamQuery)
-        .mockReturnValueOnce(updateQuery)
+        .mockReturnValueOnce(existingQuery)
+        .mockReturnValueOnce(insertQuery)
     });
 
     const response = await request(buildApp(
@@ -164,16 +164,15 @@ describe('mutation integrity predicates and field allowlists', () => {
       locationTrackingRouter,
       { id: 'responder-1', role: 'responder', organization_id: 'org-1' }
     ))
-      .put('/location-tracking/update/123e4567-e89b-12d3-a456-426614174003')
-      .send({ latitude: 14, longitude: 121, user_id: 'other-user', organization_id: 'org-2' });
+      .put('/location-tracking/reports/123e4567-e89b-12d3-a456-426614174003/location')
+      .send({ latitude: 14, longitude: 121, responder_id: 'other-user', organization_id: 'org-2', team_id: 'team-2' });
 
     expect(response.status).toBe(200);
-    expect(updateQuery.eq).toHaveBeenCalledWith('id', 'track-1');
-    expect(updateQuery.eq).toHaveBeenCalledWith('team_id', 'team-1');
-    expect(updateQuery.eq).toHaveBeenCalledWith('user_id', 'responder-1');
-    expect(updateQuery.eq).toHaveBeenCalledWith('emergency_report_id', '123e4567-e89b-12d3-a456-426614174003');
-    expect(updateQuery.eq).toHaveBeenCalledWith('is_active', true);
-    expect(updateQuery.update.mock.calls[0][0]).not.toHaveProperty('organization_id');
-    expect(updateQuery.update.mock.calls[0][0]).not.toHaveProperty('user_id');
+    expect(insertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
+      responder_id: 'responder-1',
+      organization_id: 'org-1',
+      team_id: 'team-1',
+      report_id: '123e4567-e89b-12d3-a456-426614174003'
+    }));
   });
 });

@@ -112,12 +112,11 @@ describe('A.5.5I input and range validation', () => {
     );
   });
 
-  test('accepts zero location telemetry values and preserves them in the insert', async () => {
-    const insertQuery = buildQuery({ data: { id: 'tracking-1', latitude: 0, longitude: 0 }, error: null });
+  test('accepts zero location values and preserves them in the published position', async () => {
+    const insertQuery = buildQuery({ data: { captured_at: 'c', received_at: 'r' }, error: null });
     const queries = [
-      buildQuery({ data: { id: validUUID, organization_id: 'org-1', assigned_team_id: 'team-1' }, error: null }),
-      buildQuery({ data: { id: 'team-1', organization_id: 'org-1', team_leader_id: 'responder-1' }, error: null }),
-      buildQuery({ data: null, error: null }),
+      buildQuery({ data: { id: validUUID, organization_id: 'org-1', assigned_team_id: 'team-1', status: 'responding', cluster_id: null }, error: null }),
+      buildQuery({ data: { id: 'team-1', organization_id: 'org-1', team_leader_id: 'responder-1', is_active: true }, error: null }),
       buildQuery({ data: null, error: null }),
       insertQuery
     ];
@@ -132,59 +131,15 @@ describe('A.5.5I input and range validation', () => {
     app.use('/location-tracking', locationTrackingRouter);
 
     const response = await request(app)
-      .post(`/location-tracking/start/${validUUID}`)
+      .put(`/location-tracking/reports/${validUUID}/location`)
       .send({ latitude: 0, longitude: 0, accuracy: 0 });
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(200);
     expect(insertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
       latitude: 0,
       longitude: 0,
-      accuracy: 0
+      accuracy_meters: 0
     }));
-  });
-
-  test('preserves zero values through location tracking update persistence', async () => {
-    const updateQuery = buildQuery({
-      data: { id: 'tracking-1' },
-      error: null
-    });
-    const queries = [
-      buildQuery({ data: { id: validUUID, organization_id: 'org-1' }, error: null }),
-      buildQuery({ data: { id: 'tracking-1', team_id: 'team-1', emergency_report_id: validUUID }, error: null }),
-      buildQuery({ data: { id: 'team-1', organization_id: 'org-1' }, error: null }),
-      updateQuery
-    ];
-    getClient.mockReturnValue({ from: jest.fn(() => queries.shift()) });
-
-    const app = express();
-    app.use(express.json());
-    app.use((req, res, next) => {
-      req.user = { id: 'responder-1', role: 'responder', organization_id: 'org-1' };
-      next();
-    });
-    app.use('/location-tracking', locationTrackingRouter);
-
-    const response = await request(app)
-      .put(`/location-tracking/update/${validUUID}`)
-      .send({
-        latitude: 0,
-        longitude: 0,
-        speed: 0,
-        heading: 0,
-        accuracy: 0,
-        eta_minutes: 0
-      });
-
-    expect(response.status).toBe(200);
-    expect(updateQuery.update).toHaveBeenCalledWith({
-      latitude: 0,
-      longitude: 0,
-      speed: 0,
-      heading: 0,
-      accuracy: 0,
-      eta_minutes: 0,
-      updated_at: expect.any(String)
-    });
   });
 
   test.each([

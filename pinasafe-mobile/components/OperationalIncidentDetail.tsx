@@ -8,6 +8,7 @@ import { acquireDispatchLock } from '@/utils/adminDispatch';
 import { isTeamPresentationReady } from '@/utils/operations';
 import { Banner, Button, Dialog, EmptyState, ErrorState, IconButton, LoadingState, PageHeader, Screen, Section } from '@/components/ui';
 import { MemberEvidenceState, OperationalIncidentHeader, OperationalMemberSection } from '@/components/OperationalIncident';
+import ResponderLocationPanel from '@/components/ResponderLocationPanel';
 import { colors, radius, space, type } from '@/theme/tokens';
 import type { OperationalCluster } from '@/types/operationalCluster';
 import {
@@ -120,6 +121,7 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
 
   const members = useMemo(() => (cluster ? getScopedMembers(cluster) : []), [cluster]);
   const hasOperationalAssignment = Boolean(cluster?.assignedTeams.length);
+  const trackedMembers = useMemo(() => members.filter(member => member.assigned_team_id), [members]);
   const openMap = (url: string) => { void Linking.openURL(url); };
 
   if (loading && !cluster) return <Screen><PageHeader eyebrow="Operational incident" title="Loading incident" /><LoadingState rows={4} /></Screen>;
@@ -130,6 +132,9 @@ export default function OperationalIncidentDetail({ report, role, routeId = repo
     {summaryError ? <Banner title="Operational summary" message={summaryError} tone="warning" action={<Button variant="secondary" label="Retry" onPress={load} />} /> : null}
     <OperationalIncidentHeader cluster={cluster} onOpenMap={openMap} />
     {hasOperationalAssignment ? <Banner title="Response team assigned" message="A response team is assigned to this operational incident. Each report keeps its own status and evidence." tone="info" /> : null}
+    {trackedMembers.length ? <Section title="Responder location" description="Latest position shared by the assigned responder. Visible only to your command center.">
+      {trackedMembers.map(member => <ResponderLocationPanel key={member.id} reportId={member.id} />)}
+    </Section> : null}
     <Section title="Reports" description="Each report remains independent. Dispatch applies to a single report only.">
       {members.length === 0 ? <ErrorState message="No reports are available for this incident." onRetry={load} /> : members.map((member, index) => <OperationalMemberSection
         key={member.id}

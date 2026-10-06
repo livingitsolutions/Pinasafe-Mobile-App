@@ -13,11 +13,13 @@ interface APIResponse<T = unknown> {
 // Thrown by request() for any non-2xx or network-level failure.
 export class ApiError extends Error {
   readonly status: number;
+  readonly code?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -94,6 +96,29 @@ export type EvidenceUploadResult =
       classification: EvidenceClassification;
     }
   | { accepted: true; evidenceId: string; evidenceRole: 'supplementary' };
+
+export interface ResponderLocationPayload {
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  captured_at: string;
+}
+
+export interface ResponderLocationSnapshot {
+  report_id: string;
+  status: string | null;
+  tracking_active: boolean;
+  response_complete: boolean;
+  location: {
+    latitude: number;
+    longitude: number;
+    accuracy_meters: number | null;
+    captured_at: string;
+    received_at: string;
+    responder_name: string | null;
+    team_name: string | null;
+  } | null;
+}
 
 export interface PrivateEvidenceItem {
   id: string;
@@ -193,7 +218,8 @@ class APIService {
         (typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' && data.error) ||
         (typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string' && data.message) ||
         `Request failed with status ${response.status}`;
-      throw new ApiError(response.status, safeMessage);
+      const code = typeof data === 'object' && data !== null && 'code' in data && typeof data.code === 'string' ? data.code : undefined;
+      throw new ApiError(response.status, safeMessage, code);
     }
 
     return { data: data as T };
@@ -557,48 +583,16 @@ class APIService {
     return this.request(`/users${query}`);
   }
 
-  // Location Tracking methods
-  async startLocationTracking(
-    emergencyId: string,
-    latitude: number,
-    longitude: number,
-    accuracy?: number
-  ): Promise<APIResponse<any>> {
-    return this.request(`/location-tracking/start/${emergencyId}`, {
-      method: 'POST',
-      body: JSON.stringify({ latitude, longitude, accuracy }),
-    });
-  }
-
-  async updateLocation(
-    emergencyId: string,
-    data: {
-      latitude: number;
-      longitude: number;
-      speed: number;
-      heading?: number;
-      accuracy?: number;
-      eta_minutes?: number;
-    }
-  ): Promise<APIResponse<any>> {
-    return this.request(`/location-tracking/update/${emergencyId}`, {
+  // Live responder tracking (server derives responder, team and organization)
+  async publishResponderLocation(reportId: string, position: ResponderLocationPayload): Promise<APIResponse<{ data: { captured_at: string; received_at: string } }>> {
+    return this.request(`/location-tracking/reports/${reportId}/location`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      body: JSON.stringify(position),
     });
   }
 
-  async stopLocationTracking(emergencyId: string): Promise<APIResponse<any>> {
-    return this.request(`/location-tracking/stop/${emergencyId}`, {
-      method: 'POST',
-    });
-  }
-
-  async getEmergencyLocations(emergencyId: string): Promise<APIResponse<any[]>> {
-    return this.request(`/location-tracking/emergency/${emergencyId}`);
-  }
-
-  async getTeamLocations(teamId: string): Promise<APIResponse<any[]>> {
-    return this.request(`/location-tracking/team/${teamId}`);
+  async getResponderLocation(reportId: string): Promise<APIResponse<{ data: ResponderLocationSnapshot }>> {
+    return this.request(`/location-tracking/reports/${reportId}/location`);
   }
 
   // Organization methods

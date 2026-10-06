@@ -116,7 +116,7 @@ describe('authenticated identity rate limiting', () => {
     });
 
     expect(routeHandlerNames(emergencyRouter, '/')).not.toContain('authenticatedRateLimit');
-    expect(routeHandlerNames(locationTrackingRouter, '/update/:emergencyId'))
+    expect(routeHandlerNames(locationTrackingRouter, '/reports/:reportId/location'))
       .not.toContain('authenticatedRateLimit');
   });
 });
