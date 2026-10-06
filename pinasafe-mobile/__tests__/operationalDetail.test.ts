@@ -28,11 +28,50 @@ const cluster = (overrides: Partial<OperationalCluster> = {}): OperationalCluste
   priority: 'high', assignedTeams: [], memberReports: [member()], ...overrides,
 });
 const text = (tree: unknown) => collectText(tree).join(' | ');
+const textLines = (tree: unknown) => findAllByType(tree, 'Text').map(element => collectText(element).join(''));
 const item = (id: string) => ({
   id, url: `https://signed.example/${id}`, width: 640, height: 480, evidenceRole: 'primary' as const, classification: null,
 }) as never;
 
 describe('operational incident detail', () => {
+  test('resolved summary keeps report times and uses the latest member resolution from the first report', () => {
+    const first = '2026-10-07T06:23:34.000Z';
+    const latest = '2026-10-07T06:28:34.000Z';
+    const resolved = '2026-10-07T06:38:49.000Z';
+    const tree = OperationalIncidentHeader({ cluster: cluster({ status: 'resolved', firstReportedAt: first, latestReportedAt: latest,
+      memberReports: [
+        member({ id: 'a', status: 'resolved', created_at: first, resolved_at: '2026-10-07T06:30:00.000Z', updated_at: '2026-10-07T07:00:00.000Z' }),
+        member({ id: 'b', status: 'resolved', created_at: latest, resolved_at: resolved }),
+      ],
+    }), onOpenMap: jest.fn() });
+    expect(textLines(tree)).toEqual(expect.arrayContaining([
+      `First reported ${new Date(first).toLocaleString()}`,
+      `Latest report ${new Date(latest).toLocaleString()}`,
+      `Resolved ${new Date(resolved).toLocaleString()}`,
+      'Response time 15 min 15 sec',
+    ]));
+    expect(findAllByType(tree, 'StatusBadge')[0].props.value).toBe('resolved');
+    expect(text(tree)).toContain('2 Reports');
+  });
+
+  test.each(['pending', 'dispatched', 'responding'])('active operational %s omits completed timing', status => {
+    const tree = OperationalIncidentHeader({ cluster: cluster({ status: status as OperationalCluster['status'], memberReports: [member({ status, updated_at: '2026-10-07T06:38:49.000Z' })] }), onOpenMap: jest.fn() });
+    expect(text(tree)).not.toContain('Resolved ');
+    expect(text(tree)).not.toContain('Response time');
+  });
+
+  test('resolved member update compatibility fallback and invalid omission stay safe', () => {
+    const first = '2026-10-07T06:23:34.000Z';
+    const resolved = '2026-10-07T06:38:49.000Z';
+    const tree = OperationalIncidentHeader({ cluster: cluster({ status: 'resolved', firstReportedAt: first, memberReports: [member({ status: 'resolved', updated_at: resolved })] }), onOpenMap: jest.fn() });
+    expect(textLines(tree)).toEqual(expect.arrayContaining([`Resolved ${new Date(resolved).toLocaleString()}`, 'Response time 15 min 15 sec']));
+    const invalid = OperationalIncidentHeader({ cluster: cluster({ status: 'resolved', memberReports: [member({ status: 'resolved', resolved_at: 'invalid', updated_at: 'invalid' })] }), onOpenMap: jest.fn() });
+    expect(text(invalid)).not.toMatch(/Resolved |Response time|NaN|Invalid Date/);
+    const negative = OperationalIncidentHeader({ cluster: cluster({ status: 'resolved', firstReportedAt: '2026-10-07T07:00:00.000Z', memberReports: [member({ status: 'resolved', resolved_at: resolved })] }), onOpenMap: jest.fn() });
+    expect(textLines(negative)).toContain(`Resolved ${new Date(resolved).toLocaleString()}`);
+    expect(text(negative)).not.toContain('Response time');
+  });
+
   test('each member keeps its own description and evidence', () => {
     const a = OperationalMemberSection({ member: member({ id: 'a', description: 'Alpha text' }), index: 0, evidence: { status: 'ready', items: [item('ev-a')] }, canDispatch: false, onDispatch: jest.fn() });
     const b = OperationalMemberSection({ member: member({ id: 'b', description: 'Beta text' }), index: 1, evidence: { status: 'ready', items: [item('ev-b')] }, canDispatch: false, onDispatch: jest.fn() });

@@ -396,6 +396,8 @@ class IncidentClusteringService {
       priority: incident.priority,
       status: incident.status,
       created_at: incident.created_at,
+      resolved_at: incident.resolved_at,
+      updated_at: incident.updated_at,
       coordinates: this.getCoordinates(incident)
     }));
     const usableLocation = (location) => (
@@ -437,7 +439,7 @@ class IncidentClusteringService {
 
     const { data: reports, error } = await getClient()
       .from('emergency_reports')
-      .select('id, cluster_id, organization_id, assigned_team_id, reported_by, type, description, location, latitude, longitude, priority, status, created_at')
+      .select('id, cluster_id, organization_id, assigned_team_id, reported_by, type, description, location, latitude, longitude, priority, status, created_at, resolved_at, updated_at')
       .eq('organization_id', organizationId);
 
     if (error) {

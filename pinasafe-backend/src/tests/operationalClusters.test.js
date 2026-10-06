@@ -296,10 +296,36 @@ describe('GET /clusters/operational', () => {
     test('first and latest report times derive from member created_at', async () => {
       const response = await list([
         report({ id: 'r-2', cluster_id: CLUSTER_A, created_at: '2026-10-05T03:00:00.000Z' }),
-        report({ id: CLUSTER_A, cluster_id: CLUSTER_A, created_at: '2026-10-05T01:00:00.000Z' })
+        report({ id: CLUSTER_A, cluster_id: CLUSTER_A, created_at: '2026-10-05T01:00:00.000Z' }),
+        report({ id: 'invalid-time', cluster_id: CLUSTER_A, created_at: 'invalid-created-at' })
       ]);
       expect(response.body.data[0].firstReportedAt).toBe('2026-10-05T01:00:00.000Z');
       expect(response.body.data[0].latestReportedAt).toBe('2026-10-05T03:00:00.000Z');
+    });
+
+    test('member resolution timestamps are exposed and remain nullable', async () => {
+      const response = await list([
+        report({
+          id: CLUSTER_A,
+          cluster_id: CLUSTER_A,
+          resolved_at: null,
+          updated_at: '2026-10-05T02:00:00.000Z'
+        }),
+        report({
+          id: 'r-2',
+          cluster_id: CLUSTER_A,
+          resolved_at: '2026-10-05T03:00:00.000Z',
+          updated_at: null
+        })
+      ]);
+
+      expect(response.body.data[0].memberReports.map(({ resolved_at, updated_at }) => ({
+        resolved_at,
+        updated_at
+      }))).toEqual([
+        { resolved_at: null, updated_at: '2026-10-05T02:00:00.000Z' },
+        { resolved_at: '2026-10-05T03:00:00.000Z', updated_at: null }
+      ]);
     });
 
     test('assigned teams are deduplicated ids only', async () => {
@@ -399,6 +425,8 @@ describe('GET /clusters/operational', () => {
       reporter: { name: 'Jane Citizen', phone: '09170000000' },
       reporter_name: 'Jane Citizen',
       reporter_phone: '09170000000',
+      resolved_at: null,
+      updated_at: null,
       evidence_photos: [{ url: 'https://signed.example/x?token=abc' }],
       storage_path: 'private/bucket/path.jpg',
       signedUrl: 'https://signed.example/x?token=abc',
@@ -421,7 +449,7 @@ describe('GET /clusters/operational', () => {
       const response = await list([sensitive()]);
       expect(Object.keys(response.body.data[0].memberReports[0]).sort()).toEqual([
         'assigned_team_id', 'coordinates', 'created_at', 'description', 'id', 'latitude',
-        'longitude', 'organization_id', 'priority', 'status', 'type'
+        'longitude', 'organization_id', 'priority', 'resolved_at', 'status', 'type', 'updated_at'
       ]);
     });
 
@@ -439,6 +467,8 @@ describe('GET /clusters/operational', () => {
       await request(app()).get('/clusters/operational');
       const selection = query.select.mock.calls[0][0];
       expect(selection).not.toMatch(/users|reporter|\*|evidence|storage/);
+      expect(selection).toContain('resolved_at');
+      expect(selection).toContain('updated_at');
       expect(queries).toEqual(['emergency_reports']);
     });
   });

@@ -655,13 +655,16 @@ router.get('/:id', authenticateToken, validateUUID('id'), async (req, res) => {
     const { id } = req.params;
     const { user } = req;
     const supabase = getClient();
+    const teamSelection = ['responder', 'admin'].includes(user.role)
+      ? ',\n        assigned_team:rescue_teams!assigned_team_id(id, name)'
+      : '';
 
     let query = supabase
       .from('emergency_reports')
       .select(`
         *,
         reporter:users!reported_by(name, phone),
-        responder:users!responder_id(name)
+        responder:users!responder_id(name)${teamSelection}
       `)
       .eq('id', id);
 
@@ -691,7 +694,10 @@ router.get('/:id', authenticateToken, validateUUID('id'), async (req, res) => {
       reporter_phone: report.reporter?.phone,
       responder_name: report.responder?.name,
       reporter: undefined,
-      responder: undefined
+      responder: undefined,
+      assigned_team: ['responder', 'admin'].includes(user.role)
+        ? report.assigned_team
+        : undefined
     });
 
     res.json({ data: formattedReport });

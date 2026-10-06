@@ -1,5 +1,6 @@
 import React from 'react';
 import IncidentDetail, { getEmergencyReportMapUrl } from '../app/incident/[id]';
+import { collectText, findAllByType } from './support/tree';
 
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
@@ -27,7 +28,7 @@ jest.mock('lucide-react-native', () => ({
   RefreshCw: 'RefreshCw',
   ShieldCheck: 'ShieldCheck',
 }));
-jest.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: null }) }));
+jest.mock('@/contexts/AuthContext', () => ({ useAuth: jest.fn(() => ({ user: null })) }));
 jest.mock('@/services/apiService', () => ({
   apiService: {},
   isApiError: () => false,
@@ -85,11 +86,68 @@ function findElement(node: React.ReactNode, type: string): React.ReactElement<El
   return null;
 }
 
-function renderDetail(report: Record<string, unknown>) {
-  const stateValues = [report, [], false, false, '', ''];
+function renderDetail(report: Record<string, unknown>, evidence: unknown[] = []) {
+  const stateValues = [report, evidence, false, false, '', ''];
   useState.mockImplementation(() => [stateValues.shift(), jest.fn()]);
   return IncidentDetail();
 }
+
+describe('resolved report timing metadata', () => {
+  const { useAuth } = jest.requireMock('@/contexts/AuthContext') as { useAuth: jest.Mock };
+  const reported = '2026-10-07T06:23:34.000Z';
+  const resolved = '2026-10-07T06:38:49.000Z';
+  const updated = '2026-10-07T07:00:00.000Z';
+  const details = (tree: React.ReactNode) => Object.fromEntries(findAllByType(tree, 'DetailItem').map(item => [item.props.label, item.props.value]));
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useAuth.mockReturnValue({ user: { role: 'citizen' } });
+  });
+  afterEach(() => useAuth.mockReturnValue({ user: null }));
+
+  test('citizen keeps Reported and evidence and uses resolved_at rather than updated_at', () => {
+    const tree = renderDetail({ ...baseReport, status: 'resolved', created_at: reported, resolved_at: resolved, updated_at: updated }, [
+      { id: 'evidence-1', url: 'https://example.test/evidence', evidenceRole: 'primary', width: 640, height: 480 },
+    ]);
+    expect(details(tree)).toEqual({ Reported: new Date(reported).toLocaleString(), Resolved: new Date(resolved).toLocaleString(), 'Response time': '15 min 15 sec' });
+    expect(findAllByType(tree, 'StatusBadge')[0].props.value).toBe('resolved');
+    expect(findAllByType(tree, 'Section').some(section => section.props.title === 'Response status')).toBe(true);
+    expect(findAllByType(tree, 'Image')).toHaveLength(1);
+  });
+
+  test('resolved-only updated_at compatibility fallback is displayed', () => {
+    expect(details(renderDetail({ ...baseReport, status: 'resolved', created_at: reported, updated_at: resolved }))).toMatchObject({
+      Resolved: new Date(resolved).toLocaleString(), 'Response time': '15 min 15 sec',
+    });
+  });
+
+  test.each(['pending', 'dispatched', 'responding'])('citizen %s retains Last updated without completed timing', status => {
+    expect(details(renderDetail({ ...baseReport, status, created_at: reported, resolved_at: resolved, updated_at: updated }))).toEqual({
+      Reported: new Date(reported).toLocaleString(), 'Last updated': new Date(updated).toLocaleString(),
+    });
+  });
+
+  test('responder completed detail preserves the supplied historical team and has no live controls', () => {
+    useAuth.mockReturnValue({ user: { role: 'responder' } });
+    const tree = renderDetail({ ...baseReport, status: 'resolved', created_at: reported, resolved_at: resolved,
+      assigned_team: { id: 'team-1', name: 'DRRMO Alpha Team' },
+    });
+    expect(details(tree)).toMatchObject({ 'Assigned team': 'DRRMO Alpha Team', Resolved: new Date(resolved).toLocaleString(), 'Response time': '15 min 15 sec' });
+    expect(findAllByType(tree, 'Button').some(button => ['Respond', 'Mark resolved', 'Open live location controls'].includes(String(button.props.label)))).toBe(false);
+  });
+
+  test.each([
+    { resolved_at: undefined, updated_at: undefined },
+    { resolved_at: 'invalid', updated_at: 'invalid' },
+    { resolved_at: '2026-10-07T06:00:00.000Z', updated_at: updated },
+    { resolved_at: resolved, created_at: 'invalid' },
+  ])('invalid or negative completed timing omits Response time safely: %j', overrides => {
+    const tree = renderDetail({ ...baseReport, status: 'resolved', created_at: reported, ...overrides });
+    expect(details(tree)).not.toHaveProperty('Response time');
+    expect(details(tree)).not.toHaveProperty('Last updated');
+    expect(collectText(tree).join(' ')).not.toMatch(/NaN|Invalid Date|Infinity|undefined|null|-[0-9]+ min/);
+  });
+});
 
 describe('incident detail coordinate contract', () => {
   beforeEach(() => {

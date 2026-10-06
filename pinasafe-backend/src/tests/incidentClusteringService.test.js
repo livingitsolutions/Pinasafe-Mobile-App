@@ -350,18 +350,28 @@ describe('incident clustering service', () => {
       incident({
         description: 'First report details',
         created_at: '2026-10-05T12:00:00.000Z',
-        assigned_team_id: 'team-1'
+        assigned_team_id: 'team-1',
+        resolved_at: null,
+        updated_at: '2026-10-05T12:30:00.000Z'
       }),
       incident({
         id: 'report-2',
         description: 'Second report details',
         created_at: '2026-10-05T13:00:00.000Z',
-        assigned_team_id: 'team-2'
+        assigned_team_id: 'team-2',
+        resolved_at: '2026-10-05T13:30:00.000Z',
+        updated_at: null
       }),
       incident({
         id: 'report-3',
         created_at: '2026-10-05T14:00:00.000Z',
         assigned_team_id: 'team-1'
+      }),
+      incident({
+        id: 'report-invalid-time',
+        created_at: 'invalid-created-at',
+        resolved_at: null,
+        updated_at: null
       })
     ]);
 
@@ -384,11 +394,26 @@ describe('incident clustering service', () => {
         id: 'report-3',
         description: 'Smoke from the second floor',
         created_at: '2026-10-05T14:00:00.000Z'
+      },
+      {
+        id: 'report-invalid-time',
+        description: 'Smoke from the second floor',
+        created_at: 'invalid-created-at'
       }
     ]);
     expect(result.firstReportedAt).toBe('2026-10-05T12:00:00.000Z');
     expect(result.latestReportedAt).toBe('2026-10-05T14:00:00.000Z');
     expect(result.assignedTeams).toEqual([{ id: 'team-1' }, { id: 'team-2' }]);
+    expect(result.memberReports.map(({ id, resolved_at, updated_at }) => ({
+      id,
+      resolved_at,
+      updated_at
+    }))).toEqual([
+      { id: REPORT_ID, resolved_at: null, updated_at: '2026-10-05T12:30:00.000Z' },
+      { id: 'report-2', resolved_at: '2026-10-05T13:30:00.000Z', updated_at: null },
+      { id: 'report-3', resolved_at: undefined, updated_at: undefined },
+      { id: 'report-invalid-time', resolved_at: null, updated_at: null }
+    ]);
   });
 
   test.each([

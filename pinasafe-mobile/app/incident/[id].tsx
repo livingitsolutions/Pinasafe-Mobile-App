@@ -10,6 +10,7 @@ import CitizenResponseTracking from '@/components/CitizenResponseTracking';
 import ResponderNavigation from '@/components/ResponderNavigation';
 import { getEmergencyReportMapUrl } from '@/utils/mapUrl';
 import { navigateBackFromIncident } from '@/utils/incidentNavigation';
+import { formatResponseTime, getResolutionDisplayTimestamp } from '@/utils/responseTiming';
 import { colors, radius, space, type } from '@/theme/tokens';
 
 type Report = {
@@ -85,6 +86,9 @@ export default function IncidentDetail() {
   if (report && isAdmin) return <OperationalIncidentDetail report={report} role={user?.role} routeId={id} />;
   if (!report) return <Screen><PageHeader eyebrow="Incident record" title="Incident not found" navigation={backAction} /><EmptyState title="Incident not found" message="This incident is unavailable or outside your access." /></Screen>;
 
+  const resolvedTimestamp = getResolutionDisplayTimestamp(report);
+  const responseTime = formatResponseTime(report.created_at, resolvedTimestamp);
+
   return <Screen>
     <PageHeader eyebrow="Incident detail" title={report.type === 'fire' ? 'Fire incident' : 'Road incident'} description={`Reference ${report.id.slice(0, 8).toUpperCase()}`} navigation={backAction} />
     {error ? <Banner title="Action needs attention" message={error} tone="warning" /> : null}
@@ -92,7 +96,14 @@ export default function IncidentDetail() {
       <View style={styles.badges}><TypeBadge value={report.type} /><StatusBadge value={report.status} /><Priority value={report.priority} /></View>
       <Text style={styles.description}>{report.description}</Text>
       <View style={styles.location}><MapPin size={20} color={colors.brand} /><Text style={styles.locationText}>{report.location}</Text></View>
-      <View style={styles.details}><DetailItem label="Reported" value={report.created_at ? new Date(report.created_at).toLocaleString() : undefined} />{user?.role === 'citizen' ? null : <DetailItem label="Assigned team" value={report.assigned_team?.name} />}<DetailItem label="Last updated" value={report.updated_at ? new Date(report.updated_at).toLocaleString() : undefined} /></View>
+      <View style={styles.details}>
+        <DetailItem label="Reported" value={report.created_at && Number.isFinite(Date.parse(report.created_at)) ? new Date(report.created_at).toLocaleString() : undefined} />
+        {user?.role === 'citizen' ? null : <DetailItem label="Assigned team" value={report.assigned_team?.name} />}
+        {report.status === 'resolved' ? <>
+          <DetailItem label="Resolved" value={resolvedTimestamp ? new Date(resolvedTimestamp).toLocaleString() : undefined} />
+          {responseTime ? <DetailItem label="Response time" value={responseTime} /> : null}
+        </> : <DetailItem label="Last updated" value={report.updated_at ? new Date(report.updated_at).toLocaleString() : undefined} />}
+      </View>
       {mapUrl ? <Button variant="secondary" label="Open location in maps" onPress={() => Linking.openURL(mapUrl)} icon={<MapPin size={18} color={colors.ink} />} /> : <Banner title="Map coordinates unavailable" message="Map coordinates are unavailable for this incident." tone="info" />}
     </Card>
     {user?.role === 'responder' && nextStatus === 'responding' ? <ActionBar><Button label="Respond" onPress={advance} loading={actionLoading} /></ActionBar> : null}

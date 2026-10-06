@@ -190,32 +190,72 @@ describe('emergency report coordinate response contract', () => {
     });
   });
 
-  test('formats detail response without mutating the source and keeps relationship metadata', async () => {
+  test('citizen detail preserves ownership scope and does not expose the assigned team relation', async () => {
     const report = reportWith({
       reporter: { name: 'Synthetic Reporter', phone: '0000000000' },
       responder: { name: 'Synthetic Responder' },
+      assigned_team_id: TEAM_ID,
       assigned_team: { id: TEAM_ID, name: 'Synthetic Team' }
     });
     const originalReporter = { ...report.reporter };
     const detailQuery = query({ data: report, error: null });
-    setupQueries([detailQuery]);
+    const from = setupQueries([detailQuery]);
 
     const response = await request(buildApp())
       .get(`/emergency-reports/${REPORT_ID}`);
 
     expect(response.status).toBe(200);
+    expect(detailQuery.eq).toHaveBeenCalledWith('reported_by', reporter.id);
+    expect(detailQuery.select.mock.calls[0][0]).not.toContain('assigned_team:');
     expect(response.body.data).toMatchObject({
       latitude: 10.1,
       longitude: 124.8,
       coordinates: { latitude: 10.1, longitude: 124.8 },
       reporter_name: 'Synthetic Reporter',
       reporter_phone: '0000000000',
-      responder_name: 'Synthetic Responder',
-      assigned_team: report.assigned_team
+      responder_name: 'Synthetic Responder'
     });
+    expect(response.body.data).not.toHaveProperty('assigned_team');
+    expect(from).toHaveBeenCalledTimes(1);
     expect(report.reporter).toEqual(originalReporter);
     expect(report).not.toHaveProperty('reporter_name');
     expect(report).not.toHaveProperty('coordinates');
+  });
+
+  test('citizens cannot retrieve another citizen report', async () => {
+    const detailQuery = query({ data: null, error: null });
+    setupQueries([detailQuery]);
+
+    const response = await request(buildApp())
+      .get(`/emergency-reports/${REPORT_ID}`);
+
+    expect(response.status).toBe(404);
+    expect(detailQuery.eq).toHaveBeenCalledWith('reported_by', reporter.id);
+    expect(response.body.data).toBeUndefined();
+  });
+
+  test('responder detail exposes only the team retained by the report assignment', async () => {
+    const report = reportWith({
+      assigned_team_id: TEAM_ID,
+      assigned_team: { id: TEAM_ID, name: 'Retained Team' }
+    });
+    const detailQuery = query({ data: report, error: null });
+    const from = setupQueries([detailQuery]);
+
+    const response = await request(buildApp(responder))
+      .get(`/emergency-reports/${REPORT_ID}`);
+
+    expect(response.status).toBe(200);
+    expect(detailQuery.select.mock.calls[0][0]).toContain(
+      'assigned_team:rescue_teams!assigned_team_id(id, name)'
+    );
+    expect(detailQuery.eq).toHaveBeenCalledWith('id', REPORT_ID);
+    expect(response.body.data.assigned_team).toEqual({
+      id: TEAM_ID,
+      name: 'Retained Team'
+    });
+    expect(Object.keys(response.body.data.assigned_team).sort()).toEqual(['id', 'name']);
+    expect(from).toHaveBeenCalledTimes(1);
   });
 
   test('formats status-update response', async () => {
